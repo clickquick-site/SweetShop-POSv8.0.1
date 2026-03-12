@@ -1013,15 +1013,27 @@
         </div>
         <div class="kpi-card profit">
           <div class="kpi-header">
-            <span class="kpi-title">عدد الفواتير</span>
+            <span class="kpi-title">نقدي مقبوض</span>
           </div>
-          <div class="kpi-value" id="dailyCount">0</div>
+          <div class="kpi-value" id="dailyCash">0</div>
+        </div>
+        <div class="kpi-card debts">
+          <div class="kpi-header">
+            <span class="kpi-title">ديون جديدة</span>
+          </div>
+          <div class="kpi-value" id="dailyNewDebt">0</div>
         </div>
         <div class="kpi-card expenses">
           <div class="kpi-header">
             <span class="kpi-title">المصاريف</span>
           </div>
           <div class="kpi-value" id="dailyExpenses">0</div>
+        </div>
+        <div class="kpi-card profit">
+          <div class="kpi-header">
+            <span class="kpi-title">عدد الفواتير</span>
+          </div>
+          <div class="kpi-value" id="dailyCount">0</div>
         </div>
         <div class="kpi-card debts">
           <div class="kpi-header">
@@ -1043,9 +1055,11 @@
                 <th>الفاتورة</th>
                 <th>الزبون</th>
                 <th>المنتجات</th>
-                <th>المبلغ</th>
+                <th>الإجمالي</th>
+                <th>نقدي</th>
+                <th>دين</th>
                 <th>الحالة</th>
-                <th>الإجراءات</th>
+                <th>طباعة</th>
               </tr>
             </thead>
             <tbody id="dailySalesList"></tbody>
@@ -1349,9 +1363,9 @@
 <div id="toast-container"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="print.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
+<script src="print.js"></script>
 <script>
 // ============================================================
 //  POS DZ - reports.js  v8.0.0  (محسن بالكامل)
@@ -2005,15 +2019,17 @@ async function loadDailyReport() {
     !s.isCancelled && s.date.startsWith(date)
   );
   
-  // إجمالي ما قُبض فعلاً (paid) — الديون غير المدفوعة لا تُحسب كمدخول
-  const total = daySales.reduce((sum, s) => sum + (s.paid || 0), 0);
+  // ✅ الفصل الصحيح: نقدي = paid | دين جديد = total - paid
+  const totalSales  = daySales.reduce((sum, s) => sum + (s.total || 0), 0);
+  const totalCash   = daySales.reduce((sum, s) => sum + (s.paid  || 0), 0);
+  const totalNewDebt= daySales.reduce((sum, s) => sum + Math.max(0,(s.total||0)-(s.paid||0)), 0);
   const count = daySales.length;
   
   // حساب المصاريف
   const dayExpenses = allExpenses.filter(e => e.date?.startsWith(date));
   const expensesTotal = dayExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
   
-  // حساب التكلفة — فقط على المبيعات المقبوضة (paid > 0)
+  // حساب التكلفة — فقط على المبيعات المقبوضة
   let cost = 0;
   for (const sale of daySales.filter(s => (s.paid || 0) > 0)) {
     const items = allItems.filter(i => i.saleId === sale.id);
@@ -2023,18 +2039,20 @@ async function loadDailyReport() {
     }
   }
   
-  const profit = total - cost - expensesTotal;
+  const profit = totalCash - cost - expensesTotal;
   
-  document.getElementById('dailyTotal').textContent = window.currencyFormatter.format(total);
-  document.getElementById('dailyCount').textContent = count;
+  document.getElementById('dailyTotal').textContent    = window.currencyFormatter.format(totalSales);
+  document.getElementById('dailyCash').textContent     = window.currencyFormatter.format(totalCash);
+  document.getElementById('dailyNewDebt').textContent  = window.currencyFormatter.format(totalNewDebt);
+  document.getElementById('dailyCount').textContent    = count;
   document.getElementById('dailyExpenses').textContent = window.currencyFormatter.format(expensesTotal);
-  document.getElementById('dailyProfit').textContent = window.currencyFormatter.format(profit);
+  document.getElementById('dailyProfit').textContent   = window.currencyFormatter.format(profit);
   
   // عرض تفاصيل المبيعات
   const tbody = document.getElementById('dailySalesList');
   
   if (daySales.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">لا توجد مبيعات في هذا اليوم</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">لا توجد مبيعات في هذا اليوم</td></tr>';
     return;
   }
   
@@ -2043,29 +2061,33 @@ async function loadDailyReport() {
     const items = allItems.filter(i => i.saleId === sale.id);
     const productsList = items.map(i => i.productName).join('، ').substring(0, 30) + (items.length > 1 ? '...' : '');
     
+    // ✅ تصنيف صحيح بناءً على paid و isDebt
     let statusClass = 'status-paid';
-    let statusText = 'مسددة';
-    
-    if (sale.isDebt && sale.paid === 0) {
+    let statusText  = 'نقدي ✅';
+    if (sale.isDebt && (sale.paid || 0) === 0) {
       statusClass = 'status-debt';
-      statusText = 'دين';
-    } else if (sale.isDebt && sale.paid > 0) {
+      statusText  = 'دين 🔴';
+    } else if (sale.isDebt && (sale.paid || 0) > 0) {
       statusClass = 'status-partial';
-      statusText = 'جزئي';
+      statusText  = 'جزئي 🟡';
     }
     
+    const cashAmount = sale.paid || 0;
+    const debtAmount = Math.max(0, (sale.total || 0) - cashAmount);
+    
     const time = new Date(sale.date).toLocaleTimeString('ar-DZ', {
-      hour: '2-digit',
-      minute: '2-digit'
+      hour: '2-digit', minute: '2-digit'
     });
     
     return `
       <tr>
         <td>${time}</td>
         <td>${sale.invoiceNumber || '—'}</td>
-        <td>${customer ? customer.name : '—'}</td>
-        <td>${productsList}</td>
+        <td>${customer ? window.sanitizer.escape(customer.name) : '—'}</td>
+        <td>${window.sanitizer.escape(productsList)}</td>
         <td>${window.currencyFormatter.formatWithoutSymbol(sale.total)}</td>
+        <td style="color:var(--success);font-weight:700;">${cashAmount > 0 ? window.currencyFormatter.formatWithoutSymbol(cashAmount) : '—'}</td>
+        <td style="color:var(--danger);font-weight:700;">${debtAmount > 0 ? window.currencyFormatter.formatWithoutSymbol(debtAmount) : '—'}</td>
         <td><span class="status-badge ${statusClass}">${statusText}</span></td>
         <td>
           <button class="action-btn" onclick="printSaleInvoice(${sale.id})" title="طباعة">
@@ -2076,7 +2098,6 @@ async function loadDailyReport() {
     `;
   }).join('');
 }
-
 // ============================================================
 //  طباعة التقرير اليومي
 // ============================================================
@@ -2084,10 +2105,12 @@ function printDailyReport() {
   const date = document.getElementById('dailyDate').value;
   const formattedDate = window.dateUtils.formatDate(date);
   
-  const total = document.getElementById('dailyTotal').textContent;
-  const count = document.getElementById('dailyCount').textContent;
+  const total    = document.getElementById('dailyTotal').textContent;
+  const cash     = document.getElementById('dailyCash').textContent;
+  const debt     = document.getElementById('dailyNewDebt').textContent;
+  const count    = document.getElementById('dailyCount').textContent;
   const expenses = document.getElementById('dailyExpenses').textContent;
-  const profit = document.getElementById('dailyProfit').textContent;
+  const profit   = document.getElementById('dailyProfit').textContent;
   
   const printWindow = window.open('', '_blank', 'width=400,height=600');
   
@@ -2115,6 +2138,14 @@ function printDailyReport() {
       <div class="stat">
         <span class="stat-label">إجمالي المبيعات:</span>
         <span class="stat-value">${total}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">نقدي مقبوض:</span>
+        <span class="stat-value" style="color:#16a34a;">${cash}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">ديون جديدة:</span>
+        <span class="stat-value" style="color:#dc2626;">${debt}</span>
       </div>
       <div class="stat">
         <span class="stat-label">عدد الفواتير:</span>
@@ -2641,11 +2672,11 @@ async function loadSellers() {
     sellerMap[userId].count++;
     sellerMap[userId].total += sale.total || 0;
     
-    if (sale.isDebt) {
-      sellerMap[userId].debts += sale.total || 0;
-    } else {
-      sellerMap[userId].cash += sale.total || 0;
-    }
+    // ✅ النقدي = ما قُبض فعلاً | الدين = الفرق غير المسدد
+    const cashPaid = sale.paid || 0;
+    const debtPart = (sale.total || 0) - cashPaid;
+    sellerMap[userId].cash  += cashPaid;
+    if (debtPart > 0.001) sellerMap[userId].debts += debtPart;
   });
   
   const sorted = Object.values(sellerMap).sort((a, b) => b.total - a.total);
