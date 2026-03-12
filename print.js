@@ -434,6 +434,8 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, sh
   }
 
   const needBC = show('printBarcode');
+  // تأخير الطباعة: 800ms إذا كان باركود (ينتظر JsBarcode) وإلا 350ms
+  const printDelay = needBC ? 800 : 350;
 
   // ── HTML الكامل — أعمدة بـ mm مطلقة ─────────────────────────
   return `<!DOCTYPE html>
@@ -519,6 +521,17 @@ ${storeBlock}
 ${welcome}
 ${barcode}
 <hr class="db">
+
+<script>
+/* ✅ الطباعة التلقائية — تُشغَّل عند تحميل الصفحة */
+window.addEventListener('load', function() {
+  setTimeout(function() {
+    window.print();
+    window.onafterprint = function() { window.close(); };
+    setTimeout(function() { window.close(); }, 30000);
+  }, ${printDelay});
+});
+<\/script>
 
 </body>
 </html>`;
