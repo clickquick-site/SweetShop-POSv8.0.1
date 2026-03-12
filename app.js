@@ -1598,7 +1598,26 @@ async function dbPut(store, data) { return window.dbManager.put(store, data); }
 async function dbAdd(store, data) { return window.dbManager.add(store, data); }
 async function dbDelete(store, key) { return window.dbManager.delete(store, key); }
 async function dbGetByIndex(store, idx, val) { return window.dbManager.getAll(store, { index: idx, value: val }); }
-async function dbGetByRange(store, idx, lo, hi) { /* سيتم إضافتها لاحقاً */ }
+async function dbGetByRange(store, idx, lo, hi) {
+  const db = await window.dbManager.open();
+  return new Promise((resolve, reject) => {
+    const tx     = db.transaction(store, 'readonly');
+    const source = idx ? tx.objectStore(store).index(idx) : tx.objectStore(store);
+
+    let range;
+    if (lo !== undefined && lo !== null && hi !== undefined && hi !== null) {
+      range = IDBKeyRange.bound(lo, hi, false, false);
+    } else if (lo !== undefined && lo !== null) {
+      range = IDBKeyRange.lowerBound(lo, false);
+    } else if (hi !== undefined && hi !== null) {
+      range = IDBKeyRange.upperBound(hi, false);
+    }
+
+    const req = range ? source.getAll(range) : source.getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror   = () => reject(new Error(`فشل dbGetByRange في ${store}: ${req.error}`));
+  });
+}
 
 // دوال أخرى
 function startClock() {
@@ -1773,7 +1792,18 @@ function initSidebar() {
 // ══════════════════════════════════════════════════════════════
 //  التصدير النهائي
 // ══════════════════════════════════════════════════════════════
-window.initApp = initApp;
-window.APP_VERSION = APP_VERSION;
+window.initApp              = initApp;
+window.APP_VERSION          = APP_VERSION;
+window.getNextInvoiceNumber = getNextInvoiceNumber;
+window.resetDailyCounter    = resetDailyCounter;
+window.dbGetByRange         = dbGetByRange;
+
+// حوار الإدخال النصي العام (fallback إذا لم يُحمَّل print.js)
+if (typeof window._inputDialog === 'undefined') {
+  window._inputDialog = function(label, defaultValue) {
+    const val = window.prompt(label, defaultValue || '');
+    return Promise.resolve(val && val.trim() ? val.trim() : null);
+  };
+}
 
 console.log('📦 POS DZ v8.0.0 - نظام محسّن بالكامل');
