@@ -1208,7 +1208,13 @@ async function init() {
   updateTotal();
   await loadCustomerSelect();
   await updateInvoiceNumber();
-  
+
+  // تفعيل زر الفاتورة السابقة إذا وُجدت فواتير مسجّلة
+  window.dbManager.count('sales').then(n => {
+    const prev = document.getElementById('invNavPrev');
+    if (prev) prev.disabled = (n === 0);
+  }).catch(() => {});
+
   // تهيئة الأحداث
   initSearch();
   initKeyboardShortcuts();
@@ -1828,6 +1834,7 @@ async function confirmSale(print = true) {
         change,
         isDebt: paid < total ? 1 : 0,
         date: now,
+        sellerName: user?.username || '',
         customerName: customer ? customer.name : '',
         customerPhone: customer ? customer.phone : ''
       };
@@ -1842,6 +1849,7 @@ async function confirmSale(print = true) {
     
     clearCart();
     await updateInvoiceNumber();
+    _resetNavSales(); // إعادة تفعيل أسهم التنقل
     
   } catch (e) {
     console.error('خطأ في البيع:', e);
@@ -2248,8 +2256,211 @@ function initBarcodeScanner() {
 // ══════════════════════════════════════════════════════════════
 //  التنقل بين الفواتير
 // ══════════════════════════════════════════════════════════════
-function navigateInvoice(direction) {
-  // سيتم تنفيذها لاحقاً
+// ══════════════════════════════════════════════════════════════
+//  التنقل بين الفواتير — prev / next
+// ══════════════════════════════════════════════════════════════
+// قائمة الفواتير المحمّلة للتنقل (تُحدَّث عند كل بيع جديد)
+let _navSales   = [];   // [{id, invoiceNumber, date, ...}] مرتبة تصاعدياً
+let _navIdx     = -1;   // الفهرس الحالي (-1 = آخر فاتورة جديدة)
+
+/**
+ * يتنقل بين الفواتير السابقة/التالية
+ * @param {'prev'|'next'} direction
+ */
+async function navigateInvoice(direction) {
+  // تحميل الفواتير إذا لم تكن محمّلة
+  if (_navSales.length === 0) {
+    const all = await window.dbManager.getAll('sales');
+    _navSales = all
+      .filter(s => !s.isCancelled)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    // الموضع الافتراضي: آخر فاتورة
+    _navIdx = _navSales.length - 1;
+  }
+
+  if (_navSales.length === 0) {
+    window.toast.show('لا توجد فواتير سابقة', 'info');
+    return;
+  }
+
+  if (direction === 'prev') {
+    _navIdx = Math.max(0, _navIdx - 1);
+  } else {
+    _navIdx = Math.min(_navSales.length - 1, _navIdx + 1);
+  }
+
+  await _showNavInvoice(_navSales[_navIdx]);
+  _updateNavButtons();
+}
+
+/**
+ * يعرض تفاصيل فاتورة معيّنة في الـ modal
+ */
+async function _showNavInvoice(sale) {
+  if (!sale) return;
+
+  const items    = await window.dbManager.getAll('saleItems', { index: 'saleId', value: sale.id });
+  const customer = allCustomers.find(c => c.id === sale.customerId);
+  const user     = window.sessionManager?.getUser();
+
+  // ── بناء محتوى modal عرض الفاتورة ────────────────────────
+  const fmtD = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso), pad = x => String(x).padStart(2,'0');
+    return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ` +
+           `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const cur = window.currencyFormatter?.symbol || 'DA';
+  const fmtM = (n) => window.currencyFormatter
+    ? window.currencyFormatter.format(n)
+    : `${parseFloat(n||0).toFixed(2)} ${cur}`;
+
+  const isDebt   = sale.isDebt === 1;
+  const debtAmt  = isDebt ? (parseFloat(sale.total||0) - parseFloat(sale.paid||0)) : 0;
+  const change   = parseFloat(sale.change || 0);
+
+  const itemsHtml = items.map(it => `
+    <tr>
+      <td style="padding:4px 6px;border-bottom:1px solid var(--border);">
+        ${window.sanitizer.escape(it.productName || it.name || '')}
+        ${it.size ? `<small style="color:var(--text-secondary);"> — ${it.size}</small>` : ''}
+      </td>
+      <td style="text-align:center;padding:4px 6px;border-bottom:1px solid var(--border);">${it.quantity}</td>
+      <td style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);">${fmtM(it.unitPrice)}</td>
+      <td style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);font-weight:700;">${fmtM(it.total)}</td>
+    </tr>`).join('');
+
+  let totalsHtml = `
+    <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:1rem;font-weight:900;">
+      <span>${fmtM(sale.total)}</span><span>:الإجمالي</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:3px 0;">
+      <span>${fmtM(sale.paid)}</span><span>:المدفوع</span>
+    </div>`;
+
+  if (change > 0.004) {
+    totalsHtml += `
+    <div style="display:flex;justify-content:space-between;padding:3px 0;color:var(--success);">
+      <span>${fmtM(change)}</span><span>:الباقي</span>
+    </div>`;
+  }
+  if (isDebt && debtAmt > 0.004) {
+    totalsHtml += `
+    <div style="display:flex;justify-content:space-between;padding:3px 0;
+                color:var(--danger);font-weight:800;">
+      <span>${fmtM(debtAmt)}</span><span>:الدين</span>
+    </div>`;
+  }
+
+  const statusLabel = isDebt
+    ? `<span style="background:rgba(239,68,68,0.15);color:#ef4444;
+                   padding:2px 10px;border-radius:10px;font-size:0.78rem;">دين</span>`
+    : `<span style="background:rgba(16,185,129,0.15);color:#10b981;
+                   padding:2px 10px;border-radius:10px;font-size:0.78rem;">مسددة</span>`;
+
+  const container = document.getElementById('invoiceDetailContent');
+  if (container) {
+    container.innerHTML = `
+      <!-- رأس الفاتورة -->
+      <div style="display:flex;justify-content:space-between;align-items:center;
+                  margin-bottom:10px;">
+        <div style="font-size:0.8rem;color:var(--text-secondary);">${fmtD(sale.date)}</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${statusLabel}
+          <span style="font-weight:900;font-size:1rem;color:var(--primary-light);">
+            فاتورة ${window.sanitizer.escape(sale.invoiceNumber||'')}
+          </span>
+        </div>
+      </div>
+
+      ${customer ? `
+      <div style="display:flex;justify-content:space-between;font-size:0.84rem;
+                  margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-secondary);">
+          ${customer.phone ? customer.phone : ''}
+        </span>
+        <span>👤 ${window.sanitizer.escape(customer.name)}</span>
+      </div>` : ''}
+
+      <!-- جدول المنتجات -->
+      <table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:10px;">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);">
+            <th style="text-align:right;padding:4px 6px;">المنتج</th>
+            <th style="text-align:center;padding:4px 6px;">ك</th>
+            <th style="text-align:left;padding:4px 6px;">السعر</th>
+            <th style="text-align:left;padding:4px 6px;">المجموع</th>
+          </tr>
+        </thead>
+        <tbody>${itemsHtml}</tbody>
+      </table>
+
+      <!-- المجاميع -->
+      <div style="border-top:2px solid var(--border);padding-top:8px;">
+        ${totalsHtml}
+      </div>
+
+      <!-- أزرار الإجراءات -->
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+        <button class="btn btn-primary" style="flex:1;"
+          onclick="_navPrintInvoice(${sale.id})">
+          <i class="fa-solid fa-print"></i> طباعة
+        </button>
+        <button class="btn btn-secondary" style="flex:1;"
+          onclick="closeModal('invoiceDetailModal')">
+          إغلاق
+        </button>
+      </div>
+    `;
+  }
+
+  // تحديث رقم الفاتورة في الهيدر مؤقتاً
+  const hdrEl = document.getElementById('headerInvoiceNum');
+  if (hdrEl) hdrEl.textContent = sale.invoiceNumber || '';
+
+  window.modalManager.open('invoiceDetailModal');
+}
+
+/**
+ * طباعة من نافذة عرض الفاتورة المتنقّل إليها
+ */
+async function _navPrintInvoice(saleId) {
+  const sale  = _navSales.find(s => s.id === saleId);
+  if (!sale) return;
+  const items = await window.dbManager.getAll('saleItems', { index: 'saleId', value: saleId });
+  const cust  = allCustomers.find(c => c.id === sale.customerId);
+  const saleData = {
+    ...sale,
+    customerName:  cust?.name  || '',
+    customerPhone: cust?.phone || '',
+    sellerName:    sale.sellerName || window.sessionManager?.getUser()?.username || ''
+  };
+  if (typeof window.printInvoice === 'function') {
+    await window.printInvoice(saleData, items);
+  }
+}
+
+/**
+ * تحديث حالة أزرار الأسهم (تعطيل عند الحدود)
+ */
+function _updateNavButtons() {
+  const prev = document.getElementById('invNavPrev');
+  const next = document.getElementById('invNavNext');
+  if (prev) prev.disabled = (_navIdx <= 0);
+  if (next) next.disabled = (_navIdx >= _navSales.length - 1);
+}
+
+/**
+ * يُعيد تعيين قائمة التنقل (يُستدعى بعد كل بيع جديد)
+ */
+function _resetNavSales() {
+  _navSales = [];
+  _navIdx   = -1;
+  _updateNavButtons();
+  // إعادة تفعيل زر السابق فقط (يوجد فواتير سابقة)
+  const prev = document.getElementById('invNavPrev');
+  if (prev) prev.disabled = false;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2265,8 +2476,9 @@ async function reprintLastInvoice() {
   const items = await window.dbManager.getAll('saleItems', { index: 'saleId', value: lastSaleId });
   const customer = allCustomers.find(c => c.id === sale.customerId);
   
-  sale.customerName = customer ? customer.name : '';
+  sale.customerName  = customer ? customer.name  : '';
   sale.customerPhone = customer ? customer.phone : '';
+  sale.sellerName    = sale.sellerName || window.sessionManager?.getUser()?.username || '';
   
   if (typeof window.printInvoice === 'function') {
     await window.printInvoice(sale, items);
