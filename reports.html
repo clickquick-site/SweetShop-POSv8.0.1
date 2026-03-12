@@ -1349,6 +1349,7 @@
 <div id="toast-container"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="print.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
 <script>
@@ -2067,7 +2068,7 @@ async function loadDailyReport() {
         <td>${window.currencyFormatter.formatWithoutSymbol(sale.total)}</td>
         <td><span class="status-badge ${statusClass}">${statusText}</span></td>
         <td>
-          <button class="action-btn" onclick="printInvoice(${sale.id})" title="طباعة">
+          <button class="action-btn" onclick="printSaleInvoice(${sale.id})" title="طباعة">
             <i class="fa-solid fa-print"></i>
           </button>
         </td>
@@ -2511,7 +2512,7 @@ async function filterArchive() {
         <td>${window.currencyFormatter.formatWithoutSymbol(sale.total)}</td>
         <td><span class="status-badge ${statusClass}">${statusText}</span></td>
         <td>
-          <button class="action-btn" onclick="printInvoice(${sale.id})" title="طباعة">
+          <button class="action-btn" onclick="printSaleInvoice(${sale.id})" title="طباعة">
             <i class="fa-solid fa-print"></i>
           </button>
         </td>
@@ -2675,20 +2676,24 @@ async function loadSellers() {
 // ============================================================
 //  طباعة فاتورة
 // ============================================================
-async function printInvoice(saleId) {
-  const sale = allSales.find(s => s.id === saleId);
-  const items = allItems.filter(i => i.saleId === saleId);
+async function printSaleInvoice(saleId) {
+  const sale     = allSales.find(s => s.id === saleId);
+  if (!sale) { window.toast.show('لم يتم العثور على الفاتورة', 'error'); return; }
+
+  const items    = allItems.filter(i => i.saleId === saleId);
   const customer = allCustomers.find(c => c.id === sale.customerId);
-  
-  if (!sale) return;
-  
-  // استخدام دالة الطباعة من app.js
+
+  const saleData = {
+    ...sale,
+    customerName:  customer?.name  || '',
+    customerPhone: customer?.phone || ''
+  };
+
+  // window.printInvoice مُصدَّرة من print.js
   if (typeof window.printInvoice === 'function') {
-    window.printInvoice({
-      ...sale,
-      customerName: customer?.name,
-      customerPhone: customer?.phone
-    }, items);
+    await window.printInvoice(saleData, items);
+  } else {
+    window.toast.show('⚠️ وحدة الطباعة غير محمّلة (print.js)', 'error');
   }
 }
 
