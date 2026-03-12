@@ -586,7 +586,7 @@ async function printInvoice(sale, items) {
   const widthMM = paper === '58mm' ? 58 : 80;
   const html    = _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, show, sellerName });
   const sent    = await _trySendToServer(html, cfg, 'invoice');
-  if (!sent) _iframePrintInvoice(html);
+  if (!sent) _iframePrintInvoice(html, widthMM);
 }
 
 /**
@@ -751,9 +751,9 @@ ${needBC ? `<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBa
 <style>
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 @page { size:${widthMM}mm auto; margin:0; }
-html, body { width:${widthMM}mm; background:#fff; color:#000; }
+html, body { width:${widthMM}mm; min-width:${widthMM}mm; background:#fff; color:#000; }
 body {
-  padding: 3mm 2mm 5mm 2mm;
+  padding: 2mm 2mm 4mm 2mm;
   font-family: 'Tahoma','Arial',sans-serif;
   font-size: 12px;
   direction: rtl;
@@ -778,7 +778,7 @@ body {
 .db { border:none; border-top:1px dashed #555; margin-top:6px; }
 @media print {
   @page { size:${widthMM}mm auto; margin:0; }
-  body  { padding:2mm 2mm 4mm 2mm; }
+  body  { padding:1.5mm 2mm 3mm 2mm; width:${widthMM}mm !important; min-width:${widthMM}mm !important; }
 }
 </style>
 </head>
@@ -836,12 +836,16 @@ ${barcode}
 <hr class="db">
 
 <script>
+window._printed = false;
 window.addEventListener('load',function(){
   setTimeout(function(){
+    // ✅ منع الطباعة المزدوجة: إذا طبع الـ iframe الخارجي أولاً نتجاهل هذه المرة
+    if(window._printed){ return; }
+    window._printed = true;
     window.print();
     window.onafterprint=function(){window.close();};
     setTimeout(function(){window.close();},25000);
-  },450);
+  },700);
 });
 <\/script>
 </body>
@@ -878,16 +882,25 @@ async function _trySendToServer(html, cfg, type) {
 
 /**
  * طباعة الفاتورة عبر iframe صامت
+ * @param {string} html     - محتوى HTML الفاتورة
+ * @param {number} widthMM  - عرض الورق بالميليمتر (58 أو 80)
  */
-function _iframePrintInvoice(html) {
+function _iframePrintInvoice(html, widthMM) {
+  widthMM = widthMM || 80;
+
   // إزالة أي iframe سابق للفواتير
   document.getElementById('_invF')?.remove();
 
   const f = document.createElement('iframe');
   f.id    = '_invF';
+  // ✅ الإصلاح الأساسي: يجب أن يكون للـ iframe عرض حقيقي حتى تُحسب
+  //    نسب الأعمدة المئوية بشكل صحيح أثناء التخطيط.
+  //    width:0 كانت تُسبب انهيار جميع الأعمدة إلى 0px.
   f.style.cssText = [
     'position:fixed','top:-9999px','left:-9999px',
-    'width:0','height:0','border:none','visibility:hidden'
+    'width:' + widthMM + 'mm',
+    'height:1px',
+    'border:none','visibility:hidden','overflow:visible'
   ].join(';');
   document.body.appendChild(f);
 
@@ -896,20 +909,23 @@ function _iframePrintInvoice(html) {
   doc.write(html);
   doc.close();
 
+  // ✅ الإصلاح الثاني: نُعيّن الراية _printed=true قبل الطباعة
+  //    لمنع استدعاء مزدوج من الـ script الداخلي في HTML
   f.onload = function() {
     setTimeout(function() {
       try {
+        f.contentWindow._printed = true;
         f.contentWindow.focus();
         f.contentWindow.print();
       } catch (e) {
-        // fallback: popup
+        // fallback: popup مستقل
         const w = window.open('', '_blank', 'width=400,height=600');
         if (w) { w.document.write(html); w.document.close(); }
       }
       setTimeout(function() {
         if (f && f.parentNode) f.remove();
       }, 20000);
-    }, 350);
+    }, 500);  // 500ms — كافٍ لتحميل JsBarcode قبل الطباعة
   };
 }
 
