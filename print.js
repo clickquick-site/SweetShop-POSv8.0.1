@@ -525,9 +525,8 @@ const POSDZ_PRINT = (() => {
    2)  printInvoice — طباعة فاتورة المبيعات
    ───────────────────────────────────────────────────────────── */
 /**
- * يطبع فاتورة مبيعات حرارية
- * @param {Object} sale  - بيانات البيع {invoiceNumber, total, discount, paid, change, isDebt, date, customerName, customerPhone}
- * @param {Array}  items - عناصر البيع  [{name, size, quantity, unitPrice, total}, ...]
+ * يطبع فاتورة مبيعات حرارية — هيكل مطابق للنموذج الأصلي
+ * ورق 80mm — محتوى 76mm — هامش 2mm كل جانب
  */
 async function printInvoice(sale, items) {
   if (!sale) return;
@@ -544,7 +543,7 @@ async function printInvoice(sale, items) {
     cfg[k] = (typeof getSetting === 'function') ? (await getSetting(k)) : null;
   }));
 
-  // ── اسم البائع من الجلسة الحالية ─────────────────────────
+  // اسم البائع
   const sellerName = sale.sellerName
     || window.sessionManager?.getUser()?.username
     || '';
@@ -555,13 +554,23 @@ async function printInvoice(sale, items) {
   // افتراضياً كل عنصر مُفعَّل ما لم يكن '0' صريحاً
   const show = (k) => cfg[k] !== '0';
 
-  // ── تنسيق العملة: "DA 1.234,50" ──────────────────────────
+  // ── تنسيق العملة: "1.234,50 DA" (رقم ثم رمز) ────────────
   const fmt = (n) => {
     const num = parseFloat(n || 0);
-    if (isNaN(num)) return `${cur} 0.00`;
+    if (isNaN(num)) return `0 ${cur}`;
     const parts = num.toFixed(2).split('.');
     const int   = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    return `${cur} ${int},${parts[1]}`;
+    const dec   = parts[1] === '00' ? '' : `,${parts[1]}`;
+    return `${int}${dec} ${cur}`;
+  };
+
+  // تنسيق السعر بدون رمز العملة (للعمود الأوسط في الجدول)
+  const fmtNum = (n) => {
+    const num = parseFloat(n || 0);
+    if (isNaN(num)) return '0';
+    const parts = num.toFixed(2).split('.');
+    const int   = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return parts[1] === '00' ? int : `${int},${parts[1]}`;
   };
 
   // ── تنسيق التاريخ: YYYY/MM/DD HH:MM ─────────────────────
@@ -575,27 +584,46 @@ async function printInvoice(sale, items) {
     } catch { return ''; }
   };
 
-  // ── عرض الورق (mm) ────────────────────────────────────────
   const widthMM = paper === '58mm' ? 58 : 80;
 
-  // ── بناء HTML وطباعته ─────────────────────────────────────
   const html = _buildReceiptHTML({
-    sale, items, cfg, cur, fmt, fmtDate, widthMM, show, sellerName
+    sale, items, cfg, cur, fmt, fmtNum, fmtDate, widthMM, show, sellerName
   });
 
   const sent = await _trySendToServer(html, cfg, 'invoice');
   if (!sent) _iframePrintInvoice(html);
 }
 
-/**
- * بناء HTML الفاتورة الحرارية
- * الهيكل مطابق للنموذج الأصلي:
- *   رقم الفاتورة + التاريخ  →  البائع  →  ═══  →  اسم المتجر  →  ═══
- *   جدول المنتجات  →  المجاميع  →  ═══  →  رسالة الشكر  →  باركود  →  ---
- */
-function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show, sellerName }) {
+/* ─────────────────────────────────────────────────────────────
+   بناء HTML الفاتورة الحرارية — مطابق للنموذج الأصلي خطوة بخطوة
 
-  // تعقيم النص لمنع XSS داخل HTML
+   الهيكل (RTL: أول عنصر = يمين، آخر عنصر = يسار):
+
+   ┌──────────────────────────────────────────────────┐
+   │ فاتورة #001                    2026/03/11 22:49 │
+   │ البائع:                                   ADMIN │
+   │ ══════════════════════════════════════════════ │
+   │              اسم المتجر                         │
+   │ ══════════════════════════════════════════════ │
+   │ المنتج         ك      السعر        المجموع      │
+   │ civitale        1        95          95 DA       │
+   │ ·············································· │
+   │ الإجمالي:                               95 DA   │
+   │ المدفوع:                                95 DA   │
+   │ ══════════════════════════════════════════════ │
+   │               شكراً لزيارتكم                   │
+   │           ||||  #001  ||||                     │
+   │ - - - - - - - - - - - - - - - - - - - - - -   │
+   └──────────────────────────────────────────────────┘
+
+   قواعد الاتجاه:
+   • الصفحة كلها dir="rtl"
+   • flex row في RTL: الطفل الأوّل → يمين ، الطفل الأخير → يسار
+   • لذلك: في كل صف نضع [التسمية أولاً] ثم [القيمة]
+   ───────────────────────────────────────────────────── */
+function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtNum, fmtDate, widthMM, show, sellerName }) {
+
+  // تعقيم النص
   const esc = (s) => {
     if (s === null || s === undefined) return '';
     return String(s)
@@ -605,172 +633,170 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show,
       .replace(/"/g,'&quot;');
   };
 
-  const isDebt   = sale.isDebt  === 1 || sale.isDebt  === true;
+  const isDebt   = sale.isDebt === 1 || sale.isDebt === true;
   const discount = parseFloat(sale.discount || 0);
   const change   = parseFloat(sale.change   || 0);
   const paid     = parseFloat(sale.paid     || 0);
   const total    = parseFloat(sale.total    || 0);
-  const debtAmt  = isDebt ? (total - paid) : 0;
+  const debtAmt  = isDebt ? Math.max(0, total - paid) : 0;
   const safeItems = Array.isArray(items) ? items : [];
 
-  // ── 1) بناء رأس الصفحة: رقم الفاتورة + التاريخ ─────────
-  //    السطر الأول: التاريخ يسار — رقم الفاتورة يمين
+  // ── مساعد: صف معلومات (تسمية يمين — قيمة يسار) ──────────
+  // في RTL flex: التسمية أولاً → يمين ✓ | القيمة ثانياً → يسار ✓
+  const infoRow = (label, value, extraStyle = '') =>
+    `<div style="display:flex;justify-content:space-between;align-items:baseline;
+                 margin-bottom:2px;${extraStyle}">
+       <span>${esc(label)}</span>
+       <span style="direction:ltr;text-align:left;">${esc(value)}</span>
+     </div>`;
+
+  // ── مساعد: صف مجاميع (تسمية يمين — قيمة يسار) ───────────
+  const totRow = (label, value, bold = false, color = '') =>
+    `<div style="display:flex;justify-content:space-between;align-items:baseline;
+                 padding:1px 0;${bold ? 'font-weight:900;font-size:1rem;' : ''}
+                 ${color ? `color:${color};` : ''}">
+       <span>${label}</span>
+       <span style="direction:ltr;text-align:left;">${value}</span>
+     </div>`;
+
+  // ────────────────────────────────────────────────────────
+  // ① رأس: رقم الفاتورة (يمين) — التاريخ (يسار)
+  // ────────────────────────────────────────────────────────
   const invNum  = esc(sale.invoiceNumber || '');
   const invDate = esc(fmtDate(sale.date));
 
-  let topBar = `
-  <div style="display:flex;justify-content:space-between;align-items:baseline;
-               margin-bottom:3px;">
-    <span style="font-size:0.8rem;direction:ltr;">${invDate}</span>
-    <span style="font-weight:900;font-size:1rem;">فاتورة ${invNum}</span>
-  </div>`;
-
-  // البائع
-  if (sellerName) {
-    topBar += `
+  // في RTL: أول span → يمين (رقم الفاتورة) ✓
+  //         ثاني span → يسار (التاريخ) ✓
+  let topBlock = `
   <div style="display:flex;justify-content:space-between;align-items:baseline;
                margin-bottom:2px;">
-    <span style="font-size:0.85rem;">${esc(sellerName)}</span>
-    <span style="font-size:0.85rem;">:البائع</span>
+    <span style="font-weight:900;font-size:0.95rem;">فاتورة ${invNum}</span>
+    <span style="font-size:0.82rem;direction:ltr;">${invDate}</span>
   </div>`;
+
+  // البائع: التسمية يمين — الاسم يسار
+  if (sellerName) {
+    topBlock += infoRow('البائع:', sellerName);
   }
 
   // الزبون (إن وُجد)
   if (sale.customerName) {
-    topBar += `
-  <div style="display:flex;justify-content:space-between;align-items:baseline;
-               margin-bottom:2px;">
-    <span style="font-size:0.85rem;">${esc(sale.customerName)}</span>
-    <span style="font-size:0.85rem;">:الزبون</span>
-  </div>`;
+    topBlock += infoRow('الزبون:', sale.customerName);
     if (sale.customerPhone) {
-      topBar += `
-  <div style="display:flex;justify-content:space-between;align-items:baseline;
-               margin-bottom:2px;">
-    <span style="font-size:0.82rem;direction:ltr;">${esc(sale.customerPhone)}</span>
-    <span style="font-size:0.82rem;">:الهاتف</span>
-  </div>`;
+      topBlock += infoRow('الهاتف:', sale.customerPhone);
     }
   }
 
-  // ── 2) اسم المتجر + معلوماته ─────────────────────────────
+  // ────────────────────────────────────────────────────────
+  // ② اسم المتجر ومعلوماته — مركّز
+  // ────────────────────────────────────────────────────────
   let storeBlock = '';
 
   if (show('printLogo') && cfg.storeLogo) {
     storeBlock += `
-  <div style="text-align:center;margin:4px 0;">
-    <img src="${cfg.storeLogo}" alt="logo"
-         style="max-width:60px;max-height:50px;object-fit:contain;"/>
+  <div style="text-align:center;margin:3px 0 2px;">
+    <img src="${cfg.storeLogo}" alt=""
+         style="max-width:55px;max-height:45px;object-fit:contain;"/>
   </div>`;
   }
 
   if (show('printName') && cfg.storeName) {
     storeBlock += `
-  <div style="text-align:center;font-size:1.25rem;font-weight:900;
-               letter-spacing:1px;margin:3px 0;">${esc(cfg.storeName)}</div>`;
+  <div style="text-align:center;font-size:1.2rem;font-weight:900;
+               letter-spacing:1px;margin:2px 0;">${esc(cfg.storeName)}</div>`;
   }
 
   if (show('printPhone') && cfg.storePhone) {
     storeBlock += `
-  <div style="text-align:center;font-size:0.78rem;margin-bottom:1px;">
-    ${esc(cfg.storePhone)}</div>`;
+  <div style="text-align:center;font-size:0.78rem;">${esc(cfg.storePhone)}</div>`;
   }
 
   if (show('printAddress') && cfg.storeAddress) {
     storeBlock += `
-  <div style="text-align:center;font-size:0.76rem;margin-bottom:2px;">
+  <div style="text-align:center;font-size:0.76rem;margin-bottom:1px;">
     ${esc(cfg.storeAddress)}</div>`;
   }
 
-  // ── 3) جدول المنتجات ──────────────────────────────────────
-  // الأعمدة (RTL): المنتج | ك | السعر | المجموع
+  // ────────────────────────────────────────────────────────
+  // ③ جدول المنتجات
+  //    الأعمدة في RTL (أول عمود = يمين):
+  //    المنتج(يمين) | ك | السعر(بدون DA) | المجموع(يسار مع DA)
+  // ────────────────────────────────────────────────────────
   let itemsRows = '';
   safeItems.forEach(item => {
-    const name  = esc((item.name || item.productName || ''));
+    const name  = esc(item.name || item.productName || '');
     const size  = item.size ? ` ${esc(item.size)}` : '';
     const qty   = parseFloat(item.quantity  || 0);
     const price = parseFloat(item.unitPrice || 0);
     const itot  = parseFloat(item.total     || qty * price);
 
+    // السعر بدون رمز العملة (كما في النموذج)
+    const qtyStr = qty % 1 === 0 ? qty : qty.toFixed(2);
+
     itemsRows += `
       <tr>
         <td class="c-prod">${name}${size}</td>
-        <td class="c-qty">${qty % 1 === 0 ? qty : qty.toFixed(2)}</td>
-        <td class="c-price">${fmt(price)}</td>
+        <td class="c-qty">${qtyStr}</td>
+        <td class="c-price">${fmtNum(price)}</td>
         <td class="c-total">${fmt(itot)}</td>
       </tr>`;
   });
 
-  // ── 4) المجاميع ───────────────────────────────────────────
-  let totalsBlock = '';
+  // ────────────────────────────────────────────────────────
+  // ④ المجاميع
+  //    التسمية يمين — القيمة يسار (مع رمز العملة)
+  // ────────────────────────────────────────────────────────
+  let totBlock = '';
 
-  // خصم (إن وُجد)
-  if (discount > 0) {
-    totalsBlock += `
-  <div class="tot-row">
-    <span class="tot-val" style="color:#c53030;">- ${fmt(discount)}</span>
-    <span class="tot-lbl">:الخصم</span>
-  </div>`;
+  if (discount > 0.004) {
+    totBlock += totRow('الخصم:', `- ${fmt(discount)}`, false, '#c53030');
   }
 
-  // الإجمالي — أكبر وأثقل
-  totalsBlock += `
-  <div class="tot-row" style="font-size:1rem;font-weight:900;margin:3px 0;">
-    <span class="tot-val">${fmt(total)}</span>
-    <span class="tot-lbl">:الإجمالي</span>
-  </div>`;
+  // الإجمالي: خط عريض وحجم أكبر
+  totBlock += totRow('الإجمالي:', fmt(total), true);
 
   // المدفوع
-  totalsBlock += `
-  <div class="tot-row">
-    <span class="tot-val">${fmt(paid)}</span>
-    <span class="tot-lbl">:المدفوع</span>
-  </div>`;
+  totBlock += totRow('المدفوع:', fmt(paid));
 
-  // الباقي (المبلغ المُعاد للزبون) — يظهر فقط إذا > 0
+  // الباقي — يظهر فقط إذا دفع أكثر من الإجمالي
   if (change > 0.004) {
-    totalsBlock += `
-  <div class="tot-row">
-    <span class="tot-val" style="font-weight:700;">${fmt(change)}</span>
-    <span class="tot-lbl">:الباقي</span>
-  </div>`;
+    totBlock += totRow('الباقي:', fmt(change), false, '#1a7a3c');
   }
 
-  // الدين — يظهر فقط في حالة الدين
+  // الدين — خط عريض وأحمر
   if (isDebt && debtAmt > 0.004) {
-    totalsBlock += `
-  <div class="tot-row" style="font-weight:900;color:#c53030;margin-top:3px;">
-    <span class="tot-val">${fmt(debtAmt)}</span>
-    <span class="tot-lbl">:الدين</span>
-  </div>`;
+    totBlock += totRow('الدين:', fmt(debtAmt), true, '#c53030');
   }
 
-  // ── 5) رسالة الشكر ────────────────────────────────────────
+  // ────────────────────────────────────────────────────────
+  // ⑤ رسالة الشكر
+  // ────────────────────────────────────────────────────────
   let welcomeHtml = '';
   if (show('printWelcome') && cfg.storeWelcome) {
     welcomeHtml = `
   <div style="text-align:center;font-size:0.9rem;font-weight:700;
-               margin:5px 0 3px;">${esc(cfg.storeWelcome)}</div>`;
+               margin:4px 0 2px;">${esc(cfg.storeWelcome)}</div>`;
   }
 
-  // ── 6) باركود الفاتورة ────────────────────────────────────
+  // ────────────────────────────────────────────────────────
+  // ⑥ باركود الفاتورة
+  // ────────────────────────────────────────────────────────
   let barcodeBlock = '';
   if (show('printBarcode') && sale.invoiceNumber) {
-    // إزالة الرموز غير المقبولة في CODE128
-    const bcode = String(sale.invoiceNumber).replace(/[^A-Za-z0-9\-#]/g, '');
+    const bcode = String(sale.invoiceNumber).replace(/[^A-Za-z0-9#\-]/g, '');
     if (bcode) {
       barcodeBlock = `
-  <div style="text-align:center;margin:4px 0 2px;">
+  <div style="text-align:center;margin:3px 0 2px;">
     <svg id="_invBC" style="display:block;margin:0 auto;"></svg>
-    <div style="font-size:0.8rem;font-family:'Courier New',monospace;
-                letter-spacing:2px;margin-top:2px;">${esc(sale.invoiceNumber)}</div>
+    <div style="font-size:0.78rem;font-family:'Courier New',monospace;
+                letter-spacing:3px;margin-top:1px;">${esc(sale.invoiceNumber)}</div>
   </div>
   <script>
     (function(){
       if(typeof JsBarcode!=='undefined'){
         try{
           JsBarcode('#_invBC','${bcode}',{
-            format:'CODE128',width:1.8,height:45,
+            format:'CODE128',width:1.6,height:42,
             displayValue:false,margin:0,
             background:'#fff',lineColor:'#000'
           });
@@ -781,79 +807,130 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show,
     }
   }
 
-  // ── 7) تجميع HTML الكامل ──────────────────────────────────
-  const needBC  = show('printBarcode');
-  const margins = `${widthMM === 58 ? 3 : 4}mm`;
+  // ────────────────────────────────────────────────────────
+  // ⑦ تجميع HTML الكامل
+  // ────────────────────────────────────────────────────────
+  const needBC = show('printBarcode');
 
+  // الهامش: 2mm كل جانب → محتوى 76mm في ورق 80mm
+  // top: 3mm  |  sides: 2mm  |  bottom: 5mm
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
   ${needBC ? `<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>` : ''}
   <style>
-    /* ── reset ── */
-    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    /* ── reset شامل ── */
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-    /* ── page ── */
-    @page { size:${widthMM}mm auto; margin:0; }
+    /* ── إعداد الصفحة ── */
+    @page {
+      size: ${widthMM}mm auto;
+      margin: 0;
+    }
+
+    html, body {
+      width: ${widthMM}mm;
+      background: #fff;
+      color: #000;
+    }
 
     body {
-      width: ${widthMM}mm;
-      font-family: 'Cairo','Tahoma','Arial',sans-serif;
-      font-size: 0.84rem;
-      color: #000;
-      background: #fff;
-      padding: 4mm ${margins} 6mm;
+      /* هامش 2mm كل جانب — محتوى 76mm */
+      padding: 3mm 2mm 5mm 2mm;
+      font-family: 'Tahoma', 'Arial', sans-serif;
+      font-size: 0.83rem;
       direction: rtl;
+      /* منع أي overflow */
+      overflow: hidden;
     }
 
     /* ── فاصلات ── */
-    .sep  { border-top:1px dashed #666; margin:5px 0; }
-    .sep2 { border-top:2px solid  #000; margin:5px 0; }
-    .sep-dash { border-top:1px dashed #666; margin-top:6px; }
+    .s1 {
+      border: none;
+      border-top: 1px dashed #444;
+      margin: 4px 0;
+    }
+    .s2 {
+      border: none;
+      border-top: 2px solid #000;
+      margin: 4px 0;
+    }
+    .sdash {
+      border: none;
+      border-top: 1px dashed #444;
+      margin-top: 5px;
+    }
 
     /* ── جدول المنتجات ── */
-    table { width:100%; border-collapse:collapse; }
-    th { font-weight:900; padding:2px 0; font-size:0.82rem; }
-    td { padding:2px 0; font-size:0.82rem; vertical-align:top; }
-    .c-prod  { text-align:right;  max-width:45%; word-break:break-word; }
-    .c-qty   { text-align:center; white-space:nowrap; width:10%; }
-    .c-price { text-align:center; white-space:nowrap; width:22%; }
-    .c-total { text-align:left;   white-space:nowrap; width:23%; font-weight:700; }
-
-    /* ── صف المجاميع ── */
-    .tot-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      padding: 1px 0;
-      font-size: 0.86rem;
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      direction: rtl;
     }
-    .tot-lbl { font-weight:700; }
-    .tot-val { font-weight:600; }
+    th {
+      font-size: 0.8rem;
+      font-weight: 900;
+      padding: 2px 0;
+      border-bottom: 1px solid #000;
+    }
+    td {
+      font-size: 0.8rem;
+      padding: 2px 0;
+      vertical-align: top;
+    }
+    /* أعمدة الجدول — RTL: أول عمود يمين */
+    .c-prod  {
+      text-align: right;
+      width: 42%;
+      word-break: break-word;
+      padding-right: 0;
+    }
+    .c-qty   {
+      text-align: center;
+      width: 8%;
+      white-space: nowrap;
+    }
+    .c-price {
+      text-align: center;
+      width: 22%;
+      white-space: nowrap;
+    }
+    .c-total {
+      text-align: left;
+      width: 28%;
+      white-space: nowrap;
+      font-weight: 700;
+      direction: ltr;
+    }
 
     @media print {
-      @page { size:${widthMM}mm auto; margin:0; }
-      body  { padding:3mm ${margins} 4mm; }
+      @page { size: ${widthMM}mm auto; margin: 0; }
+      html, body { width: ${widthMM}mm; }
+      body { padding: 2mm 2mm 4mm 2mm; }
     }
   </style>
 </head>
 <body>
 
-  <!-- ① رأس: رقم الفاتورة + التاريخ + البائع + الزبون -->
-  ${topBar}
+  <!-- ① رأس: رقم الفاتورة (يمين) — التاريخ (يسار) + البائع + الزبون -->
+  ${topBlock}
 
-  <div class="sep2"></div>
+  <hr class="s2">
 
   <!-- ② اسم المتجر -->
   ${storeBlock}
 
-  <div class="sep2"></div>
+  <hr class="s2">
 
   <!-- ③ جدول المنتجات -->
   <table>
     <thead>
-      <tr style="border-bottom:1px solid #000;">
+      <tr>
         <th class="c-prod">المنتج</th>
         <th class="c-qty">ك</th>
         <th class="c-price">السعر</th>
@@ -865,12 +942,12 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show,
     </tbody>
   </table>
 
-  <div class="sep"></div>
+  <hr class="s1">
 
   <!-- ④ المجاميع -->
-  ${totalsBlock}
+  ${totBlock}
 
-  <div class="sep2"></div>
+  <hr class="s2">
 
   <!-- ⑤ رسالة الشكر -->
   ${welcomeHtml}
@@ -879,7 +956,7 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show,
   ${barcodeBlock}
 
   <!-- ⑦ فاصل سفلي -->
-  <div class="sep-dash"></div>
+  <hr class="sdash">
 
   <script>
     window.addEventListener('load', function() {
@@ -887,13 +964,12 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show,
         window.print();
         window.onafterprint = function() { window.close(); };
         setTimeout(function() { window.close(); }, 25000);
-      }, 400);
+      }, 450);
     });
   <\/script>
 </body>
 </html>`;
 }
-
 /**
  * محاولة إرسال الفاتورة للسيرفر
  * @returns {boolean} true إذا نجح الإرسال
