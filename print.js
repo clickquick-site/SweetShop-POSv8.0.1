@@ -1,20 +1,15 @@
 // ============================================================
 //  POS DZ — print.js  v8.0.0
 //  وحدة الطباعة الموحدة:
-//    1) POSDZ_PRINT  — طباعة ملصقات الباركود (canvas → PNG → iframe)
-//    2) printInvoice — طباعة فاتورة المبيعات الحرارية
-//    3) _inputDialog — حوار إدخال نصي بسيط (مساعد للطباعة)
+//    1) _inputDialog  — حوار إدخال نصي مساعد
+//    2) POSDZ_PRINT   — طباعة ملصقات الباركود (canvas → PNG → iframe)
+//    3) printInvoice  — طباعة فاتورة المبيعات الحرارية
 // ============================================================
+
 
 /* ─────────────────────────────────────────────────────────────
    0)  دالة مساعدة: _inputDialog
    ───────────────────────────────────────────────────────────── */
-/**
- * يعرض نافذة إدخال نصي مخصصة ويعيد Promise<string|null>
- * @param {string} label  - نص التسمية
- * @param {string} [defaultValue] - قيمة افتراضية
- * @returns {Promise<string|null>}
- */
 function _inputDialog(label, defaultValue = '') {
   return new Promise((resolve) => {
     const id  = '_inp_' + Date.now();
@@ -27,10 +22,10 @@ function _inputDialog(label, defaultValue = '') {
     const overlay = document.createElement('div');
     overlay.id = id;
     overlay.style.cssText = [
-      'position:fixed', 'inset:0', 'z-index:99999',
+      'position:fixed','inset:0','z-index:99999',
       'background:rgba(0,0,0,0.72)',
-      'display:flex', 'align-items:center', 'justify-content:center',
-      'padding:16px', 'font-family:var(--font-main,Cairo,sans-serif)'
+      'display:flex','align-items:center','justify-content:center',
+      'padding:16px','font-family:var(--font-main,Cairo,sans-serif)'
     ].join(';');
 
     overlay.innerHTML = `
@@ -63,17 +58,14 @@ function _inputDialog(label, defaultValue = '') {
 
     document.body.appendChild(overlay);
 
-    const input  = document.getElementById(`${id}_val`);
-    const okBtn  = document.getElementById(`${id}_ok`);
-    const noBtn  = document.getElementById(`${id}_no`);
+    const input = document.getElementById(`${id}_val`);
+    const okBtn = document.getElementById(`${id}_ok`);
+    const noBtn = document.getElementById(`${id}_no`);
 
     input.focus();
     input.select();
 
-    const finish = (val) => {
-      overlay.remove();
-      resolve(val);
-    };
+    const finish = (val) => { overlay.remove(); resolve(val); };
 
     okBtn.onclick = () => finish(input.value.trim() || null);
     noBtn.onclick = () => finish(null);
@@ -85,12 +77,13 @@ function _inputDialog(label, defaultValue = '') {
   });
 }
 
-// نشرها عالمياً حتى يستطيع POSDZ_PRINT استخدامها
 window._inputDialog = _inputDialog;
 
 
 /* ─────────────────────────────────────────────────────────────
    1)  POSDZ_PRINT — طباعة ملصقات الباركود
+       (كود v7 بدون تعديل — يعمل بشكل صحيح)
+       ملاحظة: width:0 مقبول هنا لأن المحتوى PNG وليس جداول HTML
    ───────────────────────────────────────────────────────────── */
 const POSDZ_PRINT = (() => {
 
@@ -101,11 +94,10 @@ const POSDZ_PRINT = (() => {
     '38x25': { w: 38, h: 25 }, '30x20': { w: 30, h: 20 },
   };
 
-  const DPI      = 203;
-  const MM2INCH  = 25.4;
-  const mm2px    = mm => Math.round((mm / MM2INCH) * DPI);
+  const DPI     = 203;
+  const MM2INCH = 25.4;
+  const mm2px   = mm => Math.round((mm / MM2INCH) * DPI);
 
-  // ── تنسيق الباركود ────────────────────────────────────────
   function _fmt(code) {
     const s = String(code).replace(/\s/g, '');
     if (/^\d{13}$/.test(s)) return 'EAN13';
@@ -120,7 +112,6 @@ const POSDZ_PRINT = (() => {
     return Math.max(40, (String(code).length + 3) * 11 + 35);
   }
 
-  // ── تحميل JsBarcode مرة واحدة ─────────────────────────────
   function _loadBC() {
     return new Promise(res => {
       if (typeof JsBarcode !== 'undefined') { res(); return; }
@@ -131,7 +122,6 @@ const POSDZ_PRINT = (() => {
     });
   }
 
-  // ── قطع النص ──────────────────────────────────────────────
   function _clip(ctx, text, maxW) {
     if (ctx.measureText(text).width <= maxW) return text;
     let t = text;
@@ -139,7 +129,6 @@ const POSDZ_PRINT = (() => {
     return t + '\u2026';
   }
 
-  // ── أشرطة احتياطية ────────────────────────────────────────
   function _fallbackBars(ctx, x, y, w, h, code) {
     const s  = String(code);
     const uw = Math.max(2, w / ((s.length + 4) * 9));
@@ -159,7 +148,6 @@ const POSDZ_PRINT = (() => {
     ctx.fillRect(cx, y, uw, h);
   }
 
-  // ── رسم الملصق على Canvas ─────────────────────────────────
   async function _drawLabel(product, opts) {
     const { sName, cur, bcFont, bcType, showStore, showName, showPrice, size, fs, bv } = opts;
 
@@ -264,9 +252,9 @@ const POSDZ_PRINT = (() => {
     return rotated;
   }
 
-  // ── بناء HTML الطباعة ─────────────────────────────────────
+  // بناء HTML الطباعة (صورة PNG)
   function _makeHTML(canvas, wMM, hMM) {
-    const png     = canvas.toDataURL('image/png', 1.0);
+    const png      = canvas.toDataURL('image/png', 1.0);
     const pageSize = wMM+'mm '+hMM+'mm';
 
     return [
@@ -276,49 +264,19 @@ const POSDZ_PRINT = (() => {
       '<meta charset="UTF-8">',
       '<style>',
       '*, *::before, *::after {',
-      '  margin: 0 !important;',
-      '  padding: 0 !important;',
-      '  border: 0 !important;',
-      '  box-sizing: border-box !important;',
+      '  margin: 0 !important; padding: 0 !important;',
+      '  border: 0 !important; box-sizing: border-box !important;',
       '}',
-      '@page {',
-      '  size: '+pageSize+';',
-      '  margin: 0mm !important;',
-      '}',
-      'html {',
-      '  width: '+wMM+'mm;',
-      '  height: '+hMM+'mm;',
-      '  overflow: hidden;',
-      '}',
-      'body {',
-      '  width: '+wMM+'mm;',
-      '  height: '+hMM+'mm;',
-      '  overflow: hidden;',
-      '  background: #fff;',
-      '  display: block;',
-      '}',
-      'img {',
-      '  display: block;',
-      '  width: '+wMM+'mm;',
-      '  height: '+hMM+'mm;',
-      '  max-width: none;',
-      '  object-fit: fill;',
-      '  -webkit-print-color-adjust: exact;',
-      '  print-color-adjust: exact;',
-      '}',
+      '@page { size: '+pageSize+'; margin: 0mm !important; }',
+      'html { width: '+wMM+'mm; height: '+hMM+'mm; overflow: hidden; }',
+      'body { width: '+wMM+'mm; height: '+hMM+'mm; overflow: hidden; background: #fff; display: block; }',
+      'img  { display: block; width: '+wMM+'mm; height: '+hMM+'mm;',
+      '       max-width: none; object-fit: fill;',
+      '       -webkit-print-color-adjust: exact; print-color-adjust: exact; }',
       '@media print {',
-      '  @page {',
-      '    size: '+pageSize+';',
-      '    margin: 0 !important;',
-      '  }',
-      '  html, body {',
-      '    width: '+wMM+'mm !important;',
-      '    height: '+hMM+'mm !important;',
-      '  }',
-      '  img {',
-      '    width: '+wMM+'mm !important;',
-      '    height: '+hMM+'mm !important;',
-      '  }',
+      '  @page { size: '+pageSize+'; margin: 0 !important; }',
+      '  html, body { width: '+wMM+'mm !important; height: '+hMM+'mm !important; }',
+      '  img  { width: '+wMM+'mm !important; height: '+hMM+'mm !important; }',
       '}',
       '</style>',
       '</head>',
@@ -338,7 +296,7 @@ const POSDZ_PRINT = (() => {
     ].join('\n');
   }
 
-  // ── محرك الطباعة ──────────────────────────────────────────
+  // محرك الطباعة
   async function _printSmart(html, rawSize, size) {
     try {
       const en = await getSetting('syncEnabled');
@@ -361,77 +319,36 @@ const POSDZ_PRINT = (() => {
         }
       }
     } catch(_) {}
-    _iframePrint(html);
+    _iframePrintBarcode(html);
   }
 
-  // ── iframe صامت ───────────────────────────────────────────
-  function _iframePrint(html) {
+  // iframe الباركود — width:0 مقبول لأن المحتوى PNG لا جداول
+  function _iframePrintBarcode(html) {
     document.getElementById('_bcF')?.remove();
-    const f  = document.createElement('iframe');
-    f.id     = '_bcF';
+    const f = document.createElement('iframe');
+    f.id    = '_bcF';
     f.style.cssText = [
-      'position:fixed', 'top:-9999px', 'left:-9999px',
-      'width:0px', 'height:0px', 'border:none', 'visibility:hidden'
+      'position:fixed','top:-9999px','left:-9999px',
+      'width:0px','height:0px','border:none','visibility:hidden'
     ].join(';');
     document.body.appendChild(f);
 
     const doc = f.contentWindow.document;
-    doc.open();
-    doc.write(html);
-    doc.close();
+    doc.open(); doc.write(html); doc.close();
 
     f.onload = function() {
       setTimeout(function() {
-        try {
-          f.contentWindow.focus();
-          f.contentWindow.print();
-        } catch(e) {
+        try { f.contentWindow.focus(); f.contentWindow.print(); }
+        catch(e) {
           const w = window.open('','_blank','width=600,height=400');
           if (w) { w.document.write(html); w.document.close(); }
         }
-        setTimeout(function() {
-          if (f && f.parentNode) f.remove();
-        }, 15000);
+        setTimeout(function() { if (f&&f.parentNode) f.remove(); }, 15000);
       }, 300);
     };
   }
 
-  // ── الدالة الرئيسية للباركود ──────────────────────────────
-  async function barcode(product, qty) {
-    if (!product) return;
-    const copies = Math.max(1, Math.min(999, parseInt(qty)||1));
-
-    const bv = (product.barcode || String(product.id||'')).trim();
-    if (!bv) {
-      if (typeof toast==='function') toast('لا يوجد باركود للمنتج', 'warning');
-      return;
-    }
-
-    const [sName,cur,bcFont,bcType,showStore,showName,showPrice,rawSize,rawFs] =
-      await Promise.all([
-        'storeName','currency','barcodeFont','barcodeType',
-        'barcodeShowStore','barcodeShowName','barcodeShowPrice',
-        'barcodeLabelSize','barcodeFontSize'
-      ].map(k => getSetting(k)));
-
-    const size = SIZE_MAP[rawSize||'40x20'] || SIZE_MAP['40x20'];
-    const fs   = Math.max(7, Math.min(24, parseInt(rawFs)||9));
-
-    await _loadBC();
-
-    const opts   = {sName,cur,bcFont,bcType,showStore,showName,showPrice,size,fs,bv};
-    const canvas = await _drawLabel(product, opts);
-    const html   = _makeHTML(canvas, size.h, size.w);
-
-    for (let i=0; i<copies; i++) {
-      if (i>0) await new Promise(r => setTimeout(r, 700));
-      await _printSmart(html, rawSize||'40x20', size);
-    }
-    if (copies>1 && typeof toast==='function')
-      toast('🖨️ تمت طباعة '+copies+' نسخة', 'success');
-  }
-
-  // ── اختيار الطابعة ────────────────────────────────────────
+  // اختيار الطابعة
   async function choosePrinter(type) {
     const isBc = type==='barcode';
     const key  = isBc ? 'printerBarcode' : 'printerInvoice';
@@ -451,7 +368,6 @@ const POSDZ_PRINT = (() => {
     if (printers.length>0) {
       _showPrinterModal(printers, cur, key, isBc);
     } else {
-      // استخدام _inputDialog المُعرَّفة أعلاه
       const v = await _inputDialog(
         isBc ? 'اسم طابعة الباركود:' : 'اسم طابعة الفواتير:', cur);
       if (v && v.trim()) {
@@ -517,20 +433,49 @@ const POSDZ_PRINT = (() => {
     if(c) c.classList.add('selected');
   }
 
+  async function barcode(product, qty) {
+    if (!product) return;
+    const copies = Math.max(1, Math.min(999, parseInt(qty)||1));
+
+    const bv = (product.barcode || String(product.id||'')).trim();
+    if (!bv) {
+      if (typeof toast==='function') toast('لا يوجد باركود للمنتج', 'warning');
+      return;
+    }
+
+    const [sName,cur,bcFont,bcType,showStore,showName,showPrice,rawSize,rawFs] =
+      await Promise.all([
+        'storeName','currency','barcodeFont','barcodeType',
+        'barcodeShowStore','barcodeShowName','barcodeShowPrice',
+        'barcodeLabelSize','barcodeFontSize'
+      ].map(k => getSetting(k)));
+
+    const size = SIZE_MAP[rawSize||'40x20'] || SIZE_MAP['40x20'];
+    const fs   = Math.max(7, Math.min(24, parseInt(rawFs)||9));
+
+    await _loadBC();
+
+    const opts   = {sName,cur,bcFont,bcType,showStore,showName,showPrice,size,fs,bv};
+    const canvas = await _drawLabel(product, opts);
+    const html   = _makeHTML(canvas, size.h, size.w);
+
+    for (let i=0; i<copies; i++) {
+      if (i>0) await new Promise(r => setTimeout(r, 700));
+      await _printSmart(html, rawSize||'40x20', size);
+    }
+    if (copies>1 && typeof toast==='function')
+      toast('🖨️ تمت طباعة '+copies+' نسخة', 'success');
+  }
+
   return { barcode, choosePrinter, SIZE_MAP };
 })();
 
 
 /* ─────────────────────────────────────────────────────────────
-   2)  printInvoice — طباعة فاتورة المبيعات
+   2)  printInvoice — طباعة فاتورة المبيعات الحرارية
+       80mm | محتوى 76mm | هامش 2mm كل جانب
    ───────────────────────────────────────────────────────────── */
-/**
- * يطبع فاتورة مبيعات حرارية — هيكل مطابق للنموذج الأصلي
- * ورق 80mm — محتوى 76mm — هامش 2mm كل جانب
-/**
- * يطبع فاتورة مبيعات حرارية
- * ورق 80mm — هامش 2mm كل جانب — محتوى 76mm
- */
+
 async function printInvoice(sale, items) {
   if (!sale) return;
 
@@ -549,22 +494,22 @@ async function printInvoice(sale, items) {
     || window.sessionManager?.getUser()?.username
     || '';
 
-  const cur   = cfg.currency  || 'DA';
-  const paper = cfg.paperSize || '80mm';
-  const show  = (k) => cfg[k] !== '0';
+  const cur     = cfg.currency  || 'DA';
+  const paper   = cfg.paperSize || '80mm';
+  const widthMM = paper === '58mm' ? 58 : 80;
+  const show    = (k) => cfg[k] !== '0';
 
-  // "85 DA" — رقم صحيح بلا كسر  |  "85,50 DA" — مع كسر
+  // تنسيق مبلغ: "535 DA" أو "535,50 DA"
   const fmt = (n) => {
     const v = parseFloat(n || 0);
     if (isNaN(v)) return `0 ${cur}`;
-    if (v % 1 === 0) {
+    if (v % 1 === 0)
       return v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' ' + cur;
-    }
     const [i, d] = v.toFixed(2).split('.');
     return i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + d + ' ' + cur;
   };
 
-  // سعر بدون رمز عملة للعمود الأوسط
+  // سعر بدون رمز عملة (للعمود الأوسط)
   const fmtN = (n) => {
     const v = parseFloat(n || 0);
     if (isNaN(v)) return '0';
@@ -573,7 +518,7 @@ async function printInvoice(sale, items) {
     return i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + d;
   };
 
-  // YYYY/MM/DD HH:MM
+  // تاريخ: YYYY/MM/DD HH:MM
   const fmtD = (iso) => {
     if (!iso) return '';
     try {
@@ -583,63 +528,53 @@ async function printInvoice(sale, items) {
     } catch { return ''; }
   };
 
-  const widthMM = paper === '58mm' ? 58 : 80;
-  const html    = _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, show, sellerName });
-  const sent    = await _trySendToServer(html, cfg, 'invoice');
+  const html = _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, show, sellerName });
+
+  const sent = await _trySendToServer(html, cfg, 'invoice');
   if (!sent) _iframePrintInvoice(html, widthMM);
 }
 
+
 /**
- * بناء HTML الفاتورة — تخطيط جداول فقط، لا flexbox
+ * بناء HTML الفاتورة — جداول فقط، RTL
  *
- * قواعد صارمة:
- *  ① كل صف ذو عمودين: TABLE + colgroup بنسب صريحة
- *     col أول (50%) → text-align:right → التسمية/يمين
- *     col ثاني(50%) → text-align:left  → القيمة/يسار
- *  ② جدول المنتجات: 4 أعمدة بنسب ثابتة (42/8/22/28)
- *  ③ لا direction:ltr على أي عنصر منفرد
- *  ④ word-break:break-word على خلايا القيم الطويلة
- *  ⑤ overflow:visible على body — لا قطع
+ * هيكل الأعمدة:
+ *  رأس الفاتورة / المجاميع : t2 (50% | 50%)
+ *  جدول المنتجات           : ti (42% | 8% | 22% | 28%)
  */
 function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, show, sellerName }) {
 
   const esc = (s) => {
-    if (s === null || s === undefined) return '';
+    if (s == null) return '';
     return String(s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
       .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   };
 
-  const isDebt  = sale.isDebt === 1 || sale.isDebt === true;
-  const discount= parseFloat(sale.discount || 0);
-  const change  = parseFloat(sale.change   || 0);
-  const paid    = parseFloat(sale.paid     || 0);
-  const total   = parseFloat(sale.total    || 0);
-  const debtAmt = isDebt ? Math.max(0, total - paid) : 0;
+  const isDebt   = sale.isDebt === 1 || sale.isDebt === true;
+  const discount = parseFloat(sale.discount || 0);
+  const change   = parseFloat(sale.change   || 0);
+  const paid     = parseFloat(sale.paid     || 0);
+  const total    = parseFloat(sale.total    || 0);
+  const debtAmt  = isDebt ? Math.max(0, total - paid) : 0;
   const safeItems = Array.isArray(items) ? items : [];
 
-  // ── مساعد: صف جدول ذو عمودين ─────────────────────────────
-  // col أول = يمين (تسمية) | col ثاني = يسار (قيمة)
-  const row2 = (right, left, rightStyle = '', leftStyle = '') =>
+  const row2 = (right, left, rs='', ls='') =>
     `<tr>
-      <td style="text-align:right;padding:1px 0;${rightStyle}">${right}</td>
-      <td style="text-align:left;padding:1px 0;word-break:break-word;${leftStyle}">${left}</td>
+      <td style="text-align:right;padding:1px 0;${rs}">${right}</td>
+      <td style="text-align:left;padding:1px 0;word-break:break-word;${ls}">${left}</td>
     </tr>`;
 
-  // ════════════════════════════════════════
   // ① رأس الفاتورة
-  // ════════════════════════════════════════
   let headRows = row2(
     `<strong style="font-size:1.1em;">فاتورة ${esc(sale.invoiceNumber||'')}</strong>`,
     `<span style="font-size:0.92em;">${esc(fmtD(sale.date))}</span>`
   );
-  if (sellerName)        headRows += row2('البائع:',  esc(sellerName));
-  if (sale.customerName) headRows += row2('الزبون:',  esc(sale.customerName));
-  if (sale.customerPhone)headRows += row2('الهاتف:',  esc(sale.customerPhone));
+  if (sellerName)         headRows += row2('البائع:', esc(sellerName));
+  if (sale.customerName)  headRows += row2('الزبون:', esc(sale.customerName));
+  if (sale.customerPhone) headRows += row2('الهاتف:', esc(sale.customerPhone));
 
-  // ════════════════════════════════════════
   // ② اسم المتجر
-  // ════════════════════════════════════════
   let storeBlock = '';
   if (show('printLogo') && cfg.storeLogo) {
     storeBlock += `<div style="text-align:center;margin:3px 0;">
@@ -658,9 +593,7 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, sh
     storeBlock += `<div style="text-align:center;font-size:0.85em;">${esc(cfg.storeAddress)}</div>`;
   }
 
-  // ════════════════════════════════════════
   // ③ بنود الفاتورة
-  // ════════════════════════════════════════
   let itemRows = '';
   safeItems.forEach(it => {
     const name  = esc((it.name || it.productName || '').trim());
@@ -678,9 +611,7 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, sh
     </tr>`;
   });
 
-  // ════════════════════════════════════════
   // ④ المجاميع
-  // ════════════════════════════════════════
   let totRows = '';
   if (discount > 0.004) {
     totRows += row2('الخصم:', `<span style="color:#c53030;">- ${fmt(discount)}</span>`);
@@ -700,9 +631,7 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, sh
     </tr>`;
   }
 
-  // ════════════════════════════════════════
   // ⑤ رسالة الشكر
-  // ════════════════════════════════════════
   let welcome = '';
   if (show('printWelcome') && cfg.storeWelcome) {
     welcome = `<div style="text-align:center;font-weight:700;margin:4px 0 2px;">
@@ -710,9 +639,7 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, sh
                </div>`;
   }
 
-  // ════════════════════════════════════════
-  // ⑥ باركود
-  // ════════════════════════════════════════
+  // ⑥ باركود الفاتورة
   let barcode = '';
   if (show('printBarcode') && sale.invoiceNumber) {
     const bc = String(sale.invoiceNumber).replace(/[^A-Za-z0-9#\-]/g, '');
@@ -738,9 +665,7 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, sh
     }
   }
 
-  // ════════════════════════════════════════
-  // ⑦ HTML الكامل
-  // ════════════════════════════════════════
+  // ⑦ HTML الكامل — بدون script طباعة داخلي (الطباعة تُدار من _iframePrintInvoice)
   const needBC = show('printBarcode');
 
   return `<!DOCTYPE html>
@@ -751,40 +676,29 @@ ${needBC ? `<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBa
 <style>
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 @page { size:${widthMM}mm auto; margin:0; }
-html, body { width:${widthMM}mm; min-width:${widthMM}mm; background:#fff; color:#000; }
+html, body { width:${widthMM}mm; background:#fff; color:#000; }
 body {
   padding: 2mm 2mm 4mm 2mm;
   font-family: 'Tahoma','Arial',sans-serif;
   font-size: 12px;
   direction: rtl;
 }
-/* جداول التخطيط */
-.t2 {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-/* جدول المنتجات */
-.ti {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
+.t2 { width:100%; border-collapse:collapse; table-layout:fixed; }
+.ti { width:100%; border-collapse:collapse; table-layout:fixed; }
 .ti th, .ti td { font-size:11.5px; padding:2px 0; vertical-align:top; }
 .ti th { font-weight:900; }
-/* فاصلات */
 .d1 { border:none; border-top:1px dashed #555; margin:4px 0; }
 .d2 { border:none; border-top:2px solid  #000; margin:4px 0; }
 .db { border:none; border-top:1px dashed #555; margin-top:6px; }
 @media print {
   @page { size:${widthMM}mm auto; margin:0; }
-  body  { padding:1.5mm 2mm 3mm 2mm; width:${widthMM}mm !important; min-width:${widthMM}mm !important; }
+  body  { padding:1.5mm 2mm 3mm 2mm; }
+  .db   { margin-bottom:4mm; }
 }
 </style>
 </head>
 <body>
 
-<!-- ① رأس الفاتورة -->
 <table class="t2">
   <colgroup><col style="width:50%;"><col style="width:50%;"></colgroup>
   <tbody>${headRows}</tbody>
@@ -792,12 +706,10 @@ body {
 
 <hr class="d2">
 
-<!-- ② اسم المتجر -->
 ${storeBlock}
 
 <hr class="d2">
 
-<!-- ③ جدول المنتجات -->
 <table class="ti">
   <colgroup>
     <col style="width:42%;">
@@ -818,7 +730,6 @@ ${storeBlock}
 
 <hr class="d1">
 
-<!-- ④ المجاميع -->
 <table class="t2">
   <colgroup><col style="width:50%;"><col style="width:50%;"></colgroup>
   <tbody>${totRows}</tbody>
@@ -826,41 +737,26 @@ ${storeBlock}
 
 <hr class="d2">
 
-<!-- ⑤ رسالة الشكر -->
 ${welcome}
 
-<!-- ⑥ باركود -->
 ${barcode}
 
-<!-- ⑦ فاصل سفلي -->
 <hr class="db">
 
-<script>
-window._printed = false;
-window.addEventListener('load',function(){
-  setTimeout(function(){
-    // ✅ منع الطباعة المزدوجة: إذا طبع الـ iframe الخارجي أولاً نتجاهل هذه المرة
-    if(window._printed){ return; }
-    window._printed = true;
-    window.print();
-    window.onafterprint=function(){window.close();};
-    setTimeout(function(){window.close();},25000);
-  },700);
-});
-<\/script>
 </body>
 </html>`;
 }
 
+
 /**
- * @returns {boolean} true إذا نجح الإرسال
+ * إرسال الفاتورة إلى السيرفر المحلي
  */
 async function _trySendToServer(html, cfg, type) {
   try {
     if (cfg.syncEnabled !== '1') return false;
-    const ip = cfg.syncServerIP  || '192.168.1.1';
-    const pt = cfg.syncServerPort|| '3000';
-    const pn = cfg.printerInvoice|| '';
+    const ip = cfg.syncServerIP   || '192.168.1.1';
+    const pt = cfg.syncServerPort || '3000';
+    const pn = cfg.printerInvoice || '';
 
     const r = await fetch(`http://${ip}:${pt}/api/print`, {
       method:  'POST',
@@ -880,55 +776,67 @@ async function _trySendToServer(html, cfg, type) {
   return false;
 }
 
+
 /**
- * طباعة الفاتورة عبر iframe صامت
+ * طباعة الفاتورة عبر Blob URL في iframe بعرض حقيقي
+ *
+ * ✅ المشكلة السابقة:
+ *    iframe بـ width:0 → المتصفح يحسب الأعمدة المئوية على أساس 0px
+ *    → جميع الأعمدة تنهار → الفاتورة تُطبع مكدّسة في الزاوية
+ *
+ * ✅ الحل:
+ *    1) Blob URL بدلاً من document.write → مستند بـ URL حقيقي
+ *    2) width حقيقي = widthMM mm → الأعمدة تُحسب بشكل صحيح
+ *    3) لا script طباعة داخل HTML → لا طباعة مزدوجة
+ *    4) الطباعة تعتمد على @page CSS وليس على حجم الـ iframe
+ *
  * @param {string} html     - محتوى HTML الفاتورة
- * @param {number} widthMM  - عرض الورق بالميليمتر (58 أو 80)
+ * @param {number} widthMM  - عرض الورق (58 أو 80)
  */
 function _iframePrintInvoice(html, widthMM) {
   widthMM = widthMM || 80;
 
-  // إزالة أي iframe سابق للفواتير
   document.getElementById('_invF')?.remove();
+
+  const blob    = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const blobURL = URL.createObjectURL(blob);
 
   const f = document.createElement('iframe');
   f.id    = '_invF';
-  // ✅ الإصلاح الأساسي: يجب أن يكون للـ iframe عرض حقيقي حتى تُحسب
-  //    نسب الأعمدة المئوية بشكل صحيح أثناء التخطيط.
-  //    width:0 كانت تُسبب انهيار جميع الأعمدة إلى 0px.
   f.style.cssText = [
-    'position:fixed','top:-9999px','left:-9999px',
-    'width:' + widthMM + 'mm',
+    'position:fixed',
+    'top:-9999px',
+    'left:0',
+    'width:'  + widthMM + 'mm',   // ✅ عرض حقيقي
     'height:1px',
-    'border:none','visibility:hidden','overflow:visible'
+    'border:none',
+    'visibility:hidden',
+    'overflow:visible',
+    'pointer-events:none'
   ].join(';');
+
+  f.src = blobURL;
   document.body.appendChild(f);
 
-  const doc = f.contentWindow.document;
-  doc.open();
-  doc.write(html);
-  doc.close();
-
-  // ✅ الإصلاح الثاني: نُعيّن الراية _printed=true قبل الطباعة
-  //    لمنع استدعاء مزدوج من الـ script الداخلي في HTML
   f.onload = function() {
+    // 600ms لتحميل JsBarcode وتطبيق @page
     setTimeout(function() {
       try {
-        f.contentWindow._printed = true;
         f.contentWindow.focus();
         f.contentWindow.print();
-      } catch (e) {
-        // fallback: popup مستقل
+      } catch(e) {
         const w = window.open('', '_blank', 'width=400,height=600');
         if (w) { w.document.write(html); w.document.close(); }
       }
       setTimeout(function() {
+        URL.revokeObjectURL(blobURL);
         if (f && f.parentNode) f.remove();
-      }, 20000);
-    }, 500);  // 500ms — كافٍ لتحميل JsBarcode قبل الطباعة
+      }, 25000);
+    }, 600);
   };
 }
 
-// ── تصدير عالمي حتى تستطيع reports.html استخدامها ─────────
+
+// ── تصدير عالمي ──────────────────────────────────────────────
 window.printInvoice = printInvoice;
 window.POSDZ_PRINT  = POSDZ_PRINT;
