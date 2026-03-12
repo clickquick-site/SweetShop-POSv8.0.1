@@ -544,51 +544,60 @@ async function printInvoice(sale, items) {
     cfg[k] = (typeof getSetting === 'function') ? (await getSetting(k)) : null;
   }));
 
-  const cur      = cfg.currency   || 'DA';
-  const paper    = cfg.paperSize  || '80mm';
-  const show     = (k) => cfg[k] !== '0'; // افتراضياً يظهر كل شيء
+  // ── اسم البائع من الجلسة الحالية ─────────────────────────
+  const sellerName = sale.sellerName
+    || window.sessionManager?.getUser()?.username
+    || '';
 
-  // ── تنسيق العملة داخل الفاتورة ────────────────────────────
+  const cur   = cfg.currency  || 'DA';
+  const paper = cfg.paperSize || '80mm';
+
+  // افتراضياً كل عنصر مُفعَّل ما لم يكن '0' صريحاً
+  const show = (k) => cfg[k] !== '0';
+
+  // ── تنسيق العملة: "DA 1.234,50" ──────────────────────────
   const fmt = (n) => {
     const num = parseFloat(n || 0);
-    if (isNaN(num)) return `0 ${cur}`;
+    if (isNaN(num)) return `${cur} 0.00`;
     const parts = num.toFixed(2).split('.');
     const int   = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    return parts[1] === '00' ? `${int} ${cur}` : `${int},${parts[1]} ${cur}`;
+    return `${cur} ${int},${parts[1]}`;
   };
 
-  // ── تنسيق التاريخ والوقت ──────────────────────────────────
+  // ── تنسيق التاريخ: YYYY/MM/DD HH:MM ─────────────────────
   const fmtDate = (iso) => {
     if (!iso) return '';
     try {
-      const d = new Date(iso);
-      const pad = n => String(n).padStart(2,'0');
-      return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ` +
+      const d   = new Date(iso);
+      const pad = x => String(x).padStart(2, '0');
+      return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ` +
              `${pad(d.getHours())}:${pad(d.getMinutes())}`;
     } catch { return ''; }
   };
 
-  // ── حساب العرض بالـ mm ────────────────────────────────────
+  // ── عرض الورق (mm) ────────────────────────────────────────
   const widthMM = paper === '58mm' ? 58 : 80;
 
-  // ── إنشاء HTML الفاتورة ────────────────────────────────────
-  let html = _buildReceiptHTML({
-    sale, items, cfg, cur, fmt, fmtDate, widthMM, show
+  // ── بناء HTML وطباعته ─────────────────────────────────────
+  const html = _buildReceiptHTML({
+    sale, items, cfg, cur, fmt, fmtDate, widthMM, show, sellerName
   });
 
-  // ── إرسال للسيرفر أو iframe ───────────────────────────────
   const sent = await _trySendToServer(html, cfg, 'invoice');
-  if (!sent) {
-    _iframePrintInvoice(html);
-  }
+  if (!sent) _iframePrintInvoice(html);
 }
 
 /**
  * بناء HTML الفاتورة الحرارية
+ * الهيكل مطابق للنموذج الأصلي:
+ *   رقم الفاتورة + التاريخ  →  البائع  →  ═══  →  اسم المتجر  →  ═══
+ *   جدول المنتجات  →  المجاميع  →  ═══  →  رسالة الشكر  →  باركود  →  ---
  */
-function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show }) {
+function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show, sellerName }) {
+
+  // تعقيم النص لمنع XSS داخل HTML
   const esc = (s) => {
-    if (!s) return '';
+    if (s === null || s === undefined) return '';
     return String(s)
       .replace(/&/g,'&amp;')
       .replace(/</g,'&lt;')
@@ -596,208 +605,281 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show 
       .replace(/"/g,'&quot;');
   };
 
-  const isDebt   = sale.isDebt === 1 || sale.isDebt === true;
+  const isDebt   = sale.isDebt  === 1 || sale.isDebt  === true;
   const discount = parseFloat(sale.discount || 0);
-
-  // ── رأس الفاتورة ──────────────────────────────────────────
-  let header = '';
-
-  if (show('printLogo') && cfg.storeLogo) {
-    header += `<div style="text-align:center;margin-bottom:6px;">
-      <img src="${cfg.storeLogo}" alt="logo"
-           style="max-width:80px;max-height:60px;object-fit:contain;"/>
-    </div>`;
-  }
-
-  if (show('printName') && cfg.storeName) {
-    header += `<div style="text-align:center;font-size:1.05rem;font-weight:900;
-                            margin-bottom:2px;">${esc(cfg.storeName)}</div>`;
-  }
-
-  if (show('printPhone') && cfg.storePhone) {
-    header += `<div style="text-align:center;font-size:0.82rem;">
-                 📞 ${esc(cfg.storePhone)}</div>`;
-  }
-
-  if (show('printAddress') && cfg.storeAddress) {
-    header += `<div style="text-align:center;font-size:0.78rem;margin-bottom:2px;">
-                 📍 ${esc(cfg.storeAddress)}</div>`;
-  }
-
-  // ── معلومات الفاتورة ──────────────────────────────────────
-  const infoRows = [
-    ['رقم الفاتورة', esc(sale.invoiceNumber || '')],
-    ['التاريخ',      esc(fmtDate(sale.date))],
-    ...(sale.customerName ? [['الزبون', esc(sale.customerName)]] : []),
-    ...(sale.customerPhone ? [['هاتف', esc(sale.customerPhone)]] : []),
-  ];
-
-  let infoHtml = infoRows.map(([k, v]) =>
-    `<tr><td style="color:#555;padding:1px 4px;">${k}</td>
-         <td style="font-weight:700;padding:1px 4px;">${v}</td></tr>`
-  ).join('');
-
-  // ── بنود الفاتورة ──────────────────────────────────────────
-  let itemsHtml = '';
+  const change   = parseFloat(sale.change   || 0);
+  const paid     = parseFloat(sale.paid     || 0);
+  const total    = parseFloat(sale.total    || 0);
+  const debtAmt  = isDebt ? (total - paid) : 0;
   const safeItems = Array.isArray(items) ? items : [];
 
-  safeItems.forEach(item => {
-    const name   = esc((item.name || item.productName || '') + (item.size ? ` — ${item.size}` : ''));
-    const qty    = parseFloat(item.quantity  || 0);
-    const price  = parseFloat(item.unitPrice || 0);
-    const total  = parseFloat(item.total     || qty * price);
+  // ── 1) بناء رأس الصفحة: رقم الفاتورة + التاريخ ─────────
+  //    السطر الأول: التاريخ يسار — رقم الفاتورة يمين
+  const invNum  = esc(sale.invoiceNumber || '');
+  const invDate = esc(fmtDate(sale.date));
 
-    itemsHtml += `
-      <tr>
-        <td style="padding:3px 2px;vertical-align:top;">${name}</td>
-        <td style="text-align:center;padding:3px 2px;white-space:nowrap;">${qty}</td>
-        <td style="text-align:left;padding:3px 2px;white-space:nowrap;">${fmt(price)}</td>
-        <td style="text-align:left;padding:3px 2px;white-space:nowrap;font-weight:700;">${fmt(total)}</td>
-      </tr>`;
-  });
+  let topBar = `
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+               margin-bottom:3px;">
+    <span style="font-size:0.8rem;direction:ltr;">${invDate}</span>
+    <span style="font-weight:900;font-size:1rem;">فاتورة ${invNum}</span>
+  </div>`;
 
-  // ── المجاميع ──────────────────────────────────────────────
-  const subTotal = safeItems.reduce((s, i) => s + parseFloat(i.total || 0), 0);
-
-  let totalsHtml = `
-    <tr>
-      <td colspan="3" style="text-align:right;padding:2px 4px;">المجموع:</td>
-      <td style="text-align:left;padding:2px 4px;font-weight:700;">${fmt(subTotal)}</td>
-    </tr>`;
-
-  if (discount > 0) {
-    totalsHtml += `
-      <tr>
-        <td colspan="3" style="text-align:right;padding:2px 4px;color:#e53e3e;">الخصم:</td>
-        <td style="text-align:left;padding:2px 4px;color:#e53e3e;">- ${fmt(discount)}</td>
-      </tr>`;
+  // البائع
+  if (sellerName) {
+    topBar += `
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+               margin-bottom:2px;">
+    <span style="font-size:0.85rem;">${esc(sellerName)}</span>
+    <span style="font-size:0.85rem;">:البائع</span>
+  </div>`;
   }
 
-  totalsHtml += `
-    <tr style="border-top:2px solid #000;">
-      <td colspan="3" style="text-align:right;padding:3px 4px;font-size:1rem;font-weight:900;">الإجمالي:</td>
-      <td style="text-align:left;padding:3px 4px;font-size:1rem;font-weight:900;">${fmt(sale.total)}</td>
-    </tr>
-    <tr>
-      <td colspan="3" style="text-align:right;padding:2px 4px;">المدفوع:</td>
-      <td style="text-align:left;padding:2px 4px;">${fmt(sale.paid)}</td>
-    </tr>`;
-
-  if (parseFloat(sale.change || 0) > 0) {
-    totalsHtml += `
-      <tr>
-        <td colspan="3" style="text-align:right;padding:2px 4px;">الباقي:</td>
-        <td style="text-align:left;padding:2px 4px;color:#2d9b4e;font-weight:700;">${fmt(sale.change)}</td>
-      </tr>`;
-  }
-
-  if (isDebt) {
-    const debtAmt = parseFloat(sale.total) - parseFloat(sale.paid || 0);
-    totalsHtml += `
-      <tr>
-        <td colspan="3" style="text-align:right;padding:2px 4px;color:#c53030;font-weight:800;">دين:</td>
-        <td style="text-align:left;padding:2px 4px;color:#c53030;font-weight:900;">${fmt(debtAmt)}</td>
-      </tr>`;
-  }
-
-  // ── باركود الفاتورة ───────────────────────────────────────
-  let barcodeHtml = '';
-  if (show('printBarcode') && sale.invoiceNumber) {
-    const bcode = String(sale.invoiceNumber).replace(/[^a-zA-Z0-9\-]/g, '');
-    if (bcode) {
-      barcodeHtml = `
-        <div style="text-align:center;margin:8px 0 4px;">
-          <svg id="_invBC"></svg>
-          <div style="font-size:0.75rem;font-family:monospace;margin-top:2px;">${esc(sale.invoiceNumber)}</div>
-        </div>
-        <script>
-          (function() {
-            if (typeof JsBarcode !== 'undefined') {
-              try {
-                JsBarcode('#_invBC', '${bcode}', {
-                  format: 'CODE128', width: 1.5, height: 40,
-                  displayValue: false, margin: 0, background: '#fff', lineColor: '#000'
-                });
-              } catch(e) {}
-            }
-          })();
-        <\/script>`;
+  // الزبون (إن وُجد)
+  if (sale.customerName) {
+    topBar += `
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+               margin-bottom:2px;">
+    <span style="font-size:0.85rem;">${esc(sale.customerName)}</span>
+    <span style="font-size:0.85rem;">:الزبون</span>
+  </div>`;
+    if (sale.customerPhone) {
+      topBar += `
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+               margin-bottom:2px;">
+    <span style="font-size:0.82rem;direction:ltr;">${esc(sale.customerPhone)}</span>
+    <span style="font-size:0.82rem;">:الهاتف</span>
+  </div>`;
     }
   }
 
-  // ── رسالة الشكر ───────────────────────────────────────────
-  let footer = '';
-  if (show('printWelcome') && cfg.storeWelcome) {
-    footer = `<div style="text-align:center;font-size:0.85rem;font-weight:700;
-                          margin-top:8px;padding-top:6px;border-top:1px dashed #999;">
-                ${esc(cfg.storeWelcome)}
-              </div>`;
+  // ── 2) اسم المتجر + معلوماته ─────────────────────────────
+  let storeBlock = '';
+
+  if (show('printLogo') && cfg.storeLogo) {
+    storeBlock += `
+  <div style="text-align:center;margin:4px 0;">
+    <img src="${cfg.storeLogo}" alt="logo"
+         style="max-width:60px;max-height:50px;object-fit:contain;"/>
+  </div>`;
   }
 
-  // ── تجميع HTML الكامل ──────────────────────────────────────
-  const needJsBarcode = show('printBarcode');
+  if (show('printName') && cfg.storeName) {
+    storeBlock += `
+  <div style="text-align:center;font-size:1.25rem;font-weight:900;
+               letter-spacing:1px;margin:3px 0;">${esc(cfg.storeName)}</div>`;
+  }
+
+  if (show('printPhone') && cfg.storePhone) {
+    storeBlock += `
+  <div style="text-align:center;font-size:0.78rem;margin-bottom:1px;">
+    ${esc(cfg.storePhone)}</div>`;
+  }
+
+  if (show('printAddress') && cfg.storeAddress) {
+    storeBlock += `
+  <div style="text-align:center;font-size:0.76rem;margin-bottom:2px;">
+    ${esc(cfg.storeAddress)}</div>`;
+  }
+
+  // ── 3) جدول المنتجات ──────────────────────────────────────
+  // الأعمدة (RTL): المنتج | ك | السعر | المجموع
+  let itemsRows = '';
+  safeItems.forEach(item => {
+    const name  = esc((item.name || item.productName || ''));
+    const size  = item.size ? ` ${esc(item.size)}` : '';
+    const qty   = parseFloat(item.quantity  || 0);
+    const price = parseFloat(item.unitPrice || 0);
+    const itot  = parseFloat(item.total     || qty * price);
+
+    itemsRows += `
+      <tr>
+        <td class="c-prod">${name}${size}</td>
+        <td class="c-qty">${qty % 1 === 0 ? qty : qty.toFixed(2)}</td>
+        <td class="c-price">${fmt(price)}</td>
+        <td class="c-total">${fmt(itot)}</td>
+      </tr>`;
+  });
+
+  // ── 4) المجاميع ───────────────────────────────────────────
+  let totalsBlock = '';
+
+  // خصم (إن وُجد)
+  if (discount > 0) {
+    totalsBlock += `
+  <div class="tot-row">
+    <span class="tot-val" style="color:#c53030;">- ${fmt(discount)}</span>
+    <span class="tot-lbl">:الخصم</span>
+  </div>`;
+  }
+
+  // الإجمالي — أكبر وأثقل
+  totalsBlock += `
+  <div class="tot-row" style="font-size:1rem;font-weight:900;margin:3px 0;">
+    <span class="tot-val">${fmt(total)}</span>
+    <span class="tot-lbl">:الإجمالي</span>
+  </div>`;
+
+  // المدفوع
+  totalsBlock += `
+  <div class="tot-row">
+    <span class="tot-val">${fmt(paid)}</span>
+    <span class="tot-lbl">:المدفوع</span>
+  </div>`;
+
+  // الباقي (المبلغ المُعاد للزبون) — يظهر فقط إذا > 0
+  if (change > 0.004) {
+    totalsBlock += `
+  <div class="tot-row">
+    <span class="tot-val" style="font-weight:700;">${fmt(change)}</span>
+    <span class="tot-lbl">:الباقي</span>
+  </div>`;
+  }
+
+  // الدين — يظهر فقط في حالة الدين
+  if (isDebt && debtAmt > 0.004) {
+    totalsBlock += `
+  <div class="tot-row" style="font-weight:900;color:#c53030;margin-top:3px;">
+    <span class="tot-val">${fmt(debtAmt)}</span>
+    <span class="tot-lbl">:الدين</span>
+  </div>`;
+  }
+
+  // ── 5) رسالة الشكر ────────────────────────────────────────
+  let welcomeHtml = '';
+  if (show('printWelcome') && cfg.storeWelcome) {
+    welcomeHtml = `
+  <div style="text-align:center;font-size:0.9rem;font-weight:700;
+               margin:5px 0 3px;">${esc(cfg.storeWelcome)}</div>`;
+  }
+
+  // ── 6) باركود الفاتورة ────────────────────────────────────
+  let barcodeBlock = '';
+  if (show('printBarcode') && sale.invoiceNumber) {
+    // إزالة الرموز غير المقبولة في CODE128
+    const bcode = String(sale.invoiceNumber).replace(/[^A-Za-z0-9\-#]/g, '');
+    if (bcode) {
+      barcodeBlock = `
+  <div style="text-align:center;margin:4px 0 2px;">
+    <svg id="_invBC" style="display:block;margin:0 auto;"></svg>
+    <div style="font-size:0.8rem;font-family:'Courier New',monospace;
+                letter-spacing:2px;margin-top:2px;">${esc(sale.invoiceNumber)}</div>
+  </div>
+  <script>
+    (function(){
+      if(typeof JsBarcode!=='undefined'){
+        try{
+          JsBarcode('#_invBC','${bcode}',{
+            format:'CODE128',width:1.8,height:45,
+            displayValue:false,margin:0,
+            background:'#fff',lineColor:'#000'
+          });
+        }catch(e){}
+      }
+    })();
+  <\/script>`;
+    }
+  }
+
+  // ── 7) تجميع HTML الكامل ──────────────────────────────────
+  const needBC  = show('printBarcode');
+  const margins = `${widthMM === 58 ? 3 : 4}mm`;
 
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  ${needJsBarcode ? '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>' : ''}
+  ${needBC ? `<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>` : ''}
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    @page { size: ${widthMM}mm auto; margin: 0; }
+    /* ── reset ── */
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+    /* ── page ── */
+    @page { size:${widthMM}mm auto; margin:0; }
+
     body {
       width: ${widthMM}mm;
-      font-family: 'Cairo', 'Arial', sans-serif;
-      font-size: 0.85rem;
+      font-family: 'Cairo','Tahoma','Arial',sans-serif;
+      font-size: 0.84rem;
       color: #000;
       background: #fff;
-      padding: 4mm 3mm 6mm;
+      padding: 4mm ${margins} 6mm;
+      direction: rtl;
     }
-    table { width: 100%; border-collapse: collapse; }
-    .sep  { border-top: 1px dashed #999; margin: 6px 0; }
-    .sep2 { border-top: 2px solid #000;  margin: 6px 0; }
+
+    /* ── فاصلات ── */
+    .sep  { border-top:1px dashed #666; margin:5px 0; }
+    .sep2 { border-top:2px solid  #000; margin:5px 0; }
+    .sep-dash { border-top:1px dashed #666; margin-top:6px; }
+
+    /* ── جدول المنتجات ── */
+    table { width:100%; border-collapse:collapse; }
+    th { font-weight:900; padding:2px 0; font-size:0.82rem; }
+    td { padding:2px 0; font-size:0.82rem; vertical-align:top; }
+    .c-prod  { text-align:right;  max-width:45%; word-break:break-word; }
+    .c-qty   { text-align:center; white-space:nowrap; width:10%; }
+    .c-price { text-align:center; white-space:nowrap; width:22%; }
+    .c-total { text-align:left;   white-space:nowrap; width:23%; font-weight:700; }
+
+    /* ── صف المجاميع ── */
+    .tot-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 1px 0;
+      font-size: 0.86rem;
+    }
+    .tot-lbl { font-weight:700; }
+    .tot-val { font-weight:600; }
+
     @media print {
-      @page { size: ${widthMM}mm auto; margin: 0; }
-      body  { padding: 2mm 2mm 4mm; }
+      @page { size:${widthMM}mm auto; margin:0; }
+      body  { padding:3mm ${margins} 4mm; }
     }
   </style>
 </head>
 <body>
-  ${header}
+
+  <!-- ① رأس: رقم الفاتورة + التاريخ + البائع + الزبون -->
+  ${topBar}
+
   <div class="sep2"></div>
 
-  <table style="font-size:0.78rem;margin-bottom:4px;">
-    ${infoHtml}
-  </table>
+  <!-- ② اسم المتجر -->
+  ${storeBlock}
 
-  <div class="sep"></div>
+  <div class="sep2"></div>
 
-  <!-- عناوين الأعمدة -->
-  <table style="font-size:0.78rem;">
+  <!-- ③ جدول المنتجات -->
+  <table>
     <thead>
       <tr style="border-bottom:1px solid #000;">
-        <th style="text-align:right;padding:2px 2px;font-weight:900;">المنتج</th>
-        <th style="text-align:center;padding:2px 2px;font-weight:900;">الكمية</th>
-        <th style="text-align:left;padding:2px 2px;font-weight:900;">السعر</th>
-        <th style="text-align:left;padding:2px 2px;font-weight:900;">المجموع</th>
+        <th class="c-prod">المنتج</th>
+        <th class="c-qty">ك</th>
+        <th class="c-price">السعر</th>
+        <th class="c-total">المجموع</th>
       </tr>
     </thead>
     <tbody>
-      ${itemsHtml}
+      ${itemsRows}
     </tbody>
   </table>
 
   <div class="sep"></div>
 
-  <!-- المجاميع -->
-  <table style="font-size:0.82rem;">
-    <tbody>
-      ${totalsHtml}
-    </tbody>
-  </table>
+  <!-- ④ المجاميع -->
+  ${totalsBlock}
 
-  ${barcodeHtml}
-  ${footer}
+  <div class="sep2"></div>
+
+  <!-- ⑤ رسالة الشكر -->
+  ${welcomeHtml}
+
+  <!-- ⑥ باركود -->
+  ${barcodeBlock}
+
+  <!-- ⑦ فاصل سفلي -->
+  <div class="sep-dash"></div>
 
   <script>
     window.addEventListener('load', function() {
@@ -805,7 +887,7 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtDate, widthMM, show 
         window.print();
         window.onafterprint = function() { window.close(); };
         setTimeout(function() { window.close(); }, 25000);
-      }, 350);
+      }, 400);
     });
   <\/script>
 </body>
