@@ -527,11 +527,13 @@ const POSDZ_PRINT = (() => {
 /**
  * يطبع فاتورة مبيعات حرارية — هيكل مطابق للنموذج الأصلي
  * ورق 80mm — محتوى 76mm — هامش 2mm كل جانب
+/**
+ * يطبع فاتورة مبيعات حرارية
+ * ورق 80mm — هامش 2mm كل جانب — محتوى 76mm
  */
 async function printInvoice(sale, items) {
   if (!sale) return;
 
-  // ── جلب الإعدادات دفعة واحدة ─────────────────────────────
   const keys = [
     'storeName','storePhone','storeAddress','storeWelcome','storeLogo',
     'currency','paperSize',
@@ -543,259 +545,188 @@ async function printInvoice(sale, items) {
     cfg[k] = (typeof getSetting === 'function') ? (await getSetting(k)) : null;
   }));
 
-  // اسم البائع
   const sellerName = sale.sellerName
     || window.sessionManager?.getUser()?.username
     || '';
 
   const cur   = cfg.currency  || 'DA';
   const paper = cfg.paperSize || '80mm';
+  const show  = (k) => cfg[k] !== '0';
 
-  // افتراضياً كل عنصر مُفعَّل ما لم يكن '0' صريحاً
-  const show = (k) => cfg[k] !== '0';
-
-  // ── تنسيق العملة: "1.234,50 DA" (رقم ثم رمز) ────────────
+  // "85 DA" — رقم صحيح بلا كسر  |  "85,50 DA" — مع كسر
   const fmt = (n) => {
-    const num = parseFloat(n || 0);
-    if (isNaN(num)) return `0 ${cur}`;
-    const parts = num.toFixed(2).split('.');
-    const int   = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    const dec   = parts[1] === '00' ? '' : `,${parts[1]}`;
-    return `${int}${dec} ${cur}`;
+    const v = parseFloat(n || 0);
+    if (isNaN(v)) return `0 ${cur}`;
+    if (v % 1 === 0) {
+      return v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' ' + cur;
+    }
+    const [i, d] = v.toFixed(2).split('.');
+    return i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + d + ' ' + cur;
   };
 
-  // تنسيق السعر بدون رمز العملة (للعمود الأوسط في الجدول)
-  const fmtNum = (n) => {
-    const num = parseFloat(n || 0);
-    if (isNaN(num)) return '0';
-    const parts = num.toFixed(2).split('.');
-    const int   = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    return parts[1] === '00' ? int : `${int},${parts[1]}`;
+  // سعر بدون رمز عملة للعمود الأوسط
+  const fmtN = (n) => {
+    const v = parseFloat(n || 0);
+    if (isNaN(v)) return '0';
+    if (v % 1 === 0) return v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    const [i, d] = v.toFixed(2).split('.');
+    return i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + d;
   };
 
-  // ── تنسيق التاريخ: YYYY/MM/DD HH:MM ─────────────────────
-  const fmtDate = (iso) => {
+  // YYYY/MM/DD HH:MM
+  const fmtD = (iso) => {
     if (!iso) return '';
     try {
-      const d   = new Date(iso);
-      const pad = x => String(x).padStart(2, '0');
-      return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ` +
-             `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const d = new Date(iso);
+      const p = x => String(x).padStart(2, '0');
+      return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     } catch { return ''; }
   };
 
   const widthMM = paper === '58mm' ? 58 : 80;
-
-  const html = _buildReceiptHTML({
-    sale, items, cfg, cur, fmt, fmtNum, fmtDate, widthMM, show, sellerName
-  });
-
-  const sent = await _trySendToServer(html, cfg, 'invoice');
+  const html    = _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, show, sellerName });
+  const sent    = await _trySendToServer(html, cfg, 'invoice');
   if (!sent) _iframePrintInvoice(html);
 }
 
-/* ─────────────────────────────────────────────────────────────
-   بناء HTML الفاتورة الحرارية — مطابق للنموذج الأصلي خطوة بخطوة
+/**
+ * بناء HTML الفاتورة — تخطيط جداول فقط، لا flexbox
+ *
+ * قواعد صارمة:
+ *  ① كل صف ذو عمودين: TABLE + colgroup بنسب صريحة
+ *     col أول (50%) → text-align:right → التسمية/يمين
+ *     col ثاني(50%) → text-align:left  → القيمة/يسار
+ *  ② جدول المنتجات: 4 أعمدة بنسب ثابتة (42/8/22/28)
+ *  ③ لا direction:ltr على أي عنصر منفرد
+ *  ④ word-break:break-word على خلايا القيم الطويلة
+ *  ⑤ overflow:visible على body — لا قطع
+ */
+function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtN, fmtD, widthMM, show, sellerName }) {
 
-   الهيكل (RTL: أول عنصر = يمين، آخر عنصر = يسار):
-
-   ┌──────────────────────────────────────────────────┐
-   │ فاتورة #001                    2026/03/11 22:49 │
-   │ البائع:                                   ADMIN │
-   │ ══════════════════════════════════════════════ │
-   │              اسم المتجر                         │
-   │ ══════════════════════════════════════════════ │
-   │ المنتج         ك      السعر        المجموع      │
-   │ civitale        1        95          95 DA       │
-   │ ·············································· │
-   │ الإجمالي:                               95 DA   │
-   │ المدفوع:                                95 DA   │
-   │ ══════════════════════════════════════════════ │
-   │               شكراً لزيارتكم                   │
-   │           ||||  #001  ||||                     │
-   │ - - - - - - - - - - - - - - - - - - - - - -   │
-   └──────────────────────────────────────────────────┘
-
-   قواعد الاتجاه:
-   • الصفحة كلها dir="rtl"
-   • flex row في RTL: الطفل الأوّل → يمين ، الطفل الأخير → يسار
-   • لذلك: في كل صف نضع [التسمية أولاً] ثم [القيمة]
-   ───────────────────────────────────────────────────── */
-function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtNum, fmtDate, widthMM, show, sellerName }) {
-
-  // تعقيم النص
   const esc = (s) => {
     if (s === null || s === undefined) return '';
     return String(s)
-      .replace(/&/g,'&amp;')
-      .replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;')
-      .replace(/"/g,'&quot;');
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   };
 
-  const isDebt   = sale.isDebt === 1 || sale.isDebt === true;
-  const discount = parseFloat(sale.discount || 0);
-  const change   = parseFloat(sale.change   || 0);
-  const paid     = parseFloat(sale.paid     || 0);
-  const total    = parseFloat(sale.total    || 0);
-  const debtAmt  = isDebt ? Math.max(0, total - paid) : 0;
+  const isDebt  = sale.isDebt === 1 || sale.isDebt === true;
+  const discount= parseFloat(sale.discount || 0);
+  const change  = parseFloat(sale.change   || 0);
+  const paid    = parseFloat(sale.paid     || 0);
+  const total   = parseFloat(sale.total    || 0);
+  const debtAmt = isDebt ? Math.max(0, total - paid) : 0;
   const safeItems = Array.isArray(items) ? items : [];
 
-  // ── مساعد: صف معلومات (تسمية يمين — قيمة يسار) ──────────
-  // في RTL flex: التسمية أولاً → يمين ✓ | القيمة ثانياً → يسار ✓
-  const infoRow = (label, value, extraStyle = '') =>
-    `<div style="display:flex;justify-content:space-between;align-items:baseline;
-                 margin-bottom:2px;${extraStyle}">
-       <span>${esc(label)}</span>
-       <span style="direction:ltr;text-align:left;">${esc(value)}</span>
-     </div>`;
+  // ── مساعد: صف جدول ذو عمودين ─────────────────────────────
+  // col أول = يمين (تسمية) | col ثاني = يسار (قيمة)
+  const row2 = (right, left, rightStyle = '', leftStyle = '') =>
+    `<tr>
+      <td style="text-align:right;padding:1px 0;${rightStyle}">${right}</td>
+      <td style="text-align:left;padding:1px 0;word-break:break-word;${leftStyle}">${left}</td>
+    </tr>`;
 
-  // ── مساعد: صف مجاميع (تسمية يمين — قيمة يسار) ───────────
-  const totRow = (label, value, bold = false, color = '') =>
-    `<div style="display:flex;justify-content:space-between;align-items:baseline;
-                 padding:1px 0;${bold ? 'font-weight:900;font-size:1rem;' : ''}
-                 ${color ? `color:${color};` : ''}">
-       <span>${label}</span>
-       <span style="direction:ltr;text-align:left;">${value}</span>
-     </div>`;
+  // ════════════════════════════════════════
+  // ① رأس الفاتورة
+  // ════════════════════════════════════════
+  let headRows = row2(
+    `<strong style="font-size:1.1em;">فاتورة ${esc(sale.invoiceNumber||'')}</strong>`,
+    `<span style="font-size:0.92em;">${esc(fmtD(sale.date))}</span>`
+  );
+  if (sellerName)        headRows += row2('البائع:',  esc(sellerName));
+  if (sale.customerName) headRows += row2('الزبون:',  esc(sale.customerName));
+  if (sale.customerPhone)headRows += row2('الهاتف:',  esc(sale.customerPhone));
 
-  // ────────────────────────────────────────────────────────
-  // ① رأس: رقم الفاتورة (يمين) — التاريخ (يسار)
-  // ────────────────────────────────────────────────────────
-  const invNum  = esc(sale.invoiceNumber || '');
-  const invDate = esc(fmtDate(sale.date));
-
-  // في RTL: أول span → يمين (رقم الفاتورة) ✓
-  //         ثاني span → يسار (التاريخ) ✓
-  let topBlock = `
-  <div style="display:flex;justify-content:space-between;align-items:baseline;
-               margin-bottom:2px;">
-    <span style="font-weight:900;font-size:0.95rem;">فاتورة ${invNum}</span>
-    <span style="font-size:0.82rem;direction:ltr;">${invDate}</span>
-  </div>`;
-
-  // البائع: التسمية يمين — الاسم يسار
-  if (sellerName) {
-    topBlock += infoRow('البائع:', sellerName);
-  }
-
-  // الزبون (إن وُجد)
-  if (sale.customerName) {
-    topBlock += infoRow('الزبون:', sale.customerName);
-    if (sale.customerPhone) {
-      topBlock += infoRow('الهاتف:', sale.customerPhone);
-    }
-  }
-
-  // ────────────────────────────────────────────────────────
-  // ② اسم المتجر ومعلوماته — مركّز
-  // ────────────────────────────────────────────────────────
+  // ════════════════════════════════════════
+  // ② اسم المتجر
+  // ════════════════════════════════════════
   let storeBlock = '';
-
   if (show('printLogo') && cfg.storeLogo) {
-    storeBlock += `
-  <div style="text-align:center;margin:3px 0 2px;">
-    <img src="${cfg.storeLogo}" alt=""
-         style="max-width:55px;max-height:45px;object-fit:contain;"/>
-  </div>`;
+    storeBlock += `<div style="text-align:center;margin:3px 0;">
+      <img src="${cfg.storeLogo}" alt=""
+           style="max-width:55px;max-height:45px;object-fit:contain;display:block;margin:0 auto;"/>
+    </div>`;
   }
-
   if (show('printName') && cfg.storeName) {
-    storeBlock += `
-  <div style="text-align:center;font-size:1.2rem;font-weight:900;
-               letter-spacing:1px;margin:2px 0;">${esc(cfg.storeName)}</div>`;
+    storeBlock += `<div style="text-align:center;font-size:1.25em;font-weight:900;
+                               letter-spacing:1px;margin:2px 0;">${esc(cfg.storeName)}</div>`;
   }
-
   if (show('printPhone') && cfg.storePhone) {
-    storeBlock += `
-  <div style="text-align:center;font-size:0.78rem;">${esc(cfg.storePhone)}</div>`;
+    storeBlock += `<div style="text-align:center;font-size:0.88em;margin-bottom:1px;">${esc(cfg.storePhone)}</div>`;
   }
-
   if (show('printAddress') && cfg.storeAddress) {
-    storeBlock += `
-  <div style="text-align:center;font-size:0.76rem;margin-bottom:1px;">
-    ${esc(cfg.storeAddress)}</div>`;
+    storeBlock += `<div style="text-align:center;font-size:0.85em;">${esc(cfg.storeAddress)}</div>`;
   }
 
-  // ────────────────────────────────────────────────────────
-  // ③ جدول المنتجات
-  //    الأعمدة في RTL (أول عمود = يمين):
-  //    المنتج(يمين) | ك | السعر(بدون DA) | المجموع(يسار مع DA)
-  // ────────────────────────────────────────────────────────
-  let itemsRows = '';
-  safeItems.forEach(item => {
-    const name  = esc(item.name || item.productName || '');
-    const size  = item.size ? ` ${esc(item.size)}` : '';
-    const qty   = parseFloat(item.quantity  || 0);
-    const price = parseFloat(item.unitPrice || 0);
-    const itot  = parseFloat(item.total     || qty * price);
+  // ════════════════════════════════════════
+  // ③ بنود الفاتورة
+  // ════════════════════════════════════════
+  let itemRows = '';
+  safeItems.forEach(it => {
+    const name  = esc((it.name || it.productName || '').trim());
+    const size  = it.size ? ` ${esc(it.size)}` : '';
+    const qty   = parseFloat(it.quantity  || 0);
+    const price = parseFloat(it.unitPrice || 0);
+    const itot  = parseFloat(it.total     || qty * price);
+    const qStr  = qty % 1 === 0 ? String(qty) : qty.toFixed(2);
 
-    // السعر بدون رمز العملة (كما في النموذج)
-    const qtyStr = qty % 1 === 0 ? qty : qty.toFixed(2);
-
-    itemsRows += `
-      <tr>
-        <td class="c-prod">${name}${size}</td>
-        <td class="c-qty">${qtyStr}</td>
-        <td class="c-price">${fmtNum(price)}</td>
-        <td class="c-total">${fmt(itot)}</td>
-      </tr>`;
+    itemRows += `<tr>
+      <td style="text-align:right;padding:2px 0;word-break:break-word;">${name}${size}</td>
+      <td style="text-align:center;padding:2px 0;white-space:nowrap;">${qStr}</td>
+      <td style="text-align:center;padding:2px 0;white-space:nowrap;">${fmtN(price)}</td>
+      <td style="text-align:left;padding:2px 0;white-space:nowrap;font-weight:700;">${fmt(itot)}</td>
+    </tr>`;
   });
 
-  // ────────────────────────────────────────────────────────
+  // ════════════════════════════════════════
   // ④ المجاميع
-  //    التسمية يمين — القيمة يسار (مع رمز العملة)
-  // ────────────────────────────────────────────────────────
-  let totBlock = '';
-
+  // ════════════════════════════════════════
+  let totRows = '';
   if (discount > 0.004) {
-    totBlock += totRow('الخصم:', `- ${fmt(discount)}`, false, '#c53030');
+    totRows += row2('الخصم:', `<span style="color:#c53030;">- ${fmt(discount)}</span>`);
   }
-
-  // الإجمالي: خط عريض وحجم أكبر
-  totBlock += totRow('الإجمالي:', fmt(total), true);
-
-  // المدفوع
-  totBlock += totRow('المدفوع:', fmt(paid));
-
-  // الباقي — يظهر فقط إذا دفع أكثر من الإجمالي
+  totRows += `<tr>
+    <td style="text-align:right;padding:2px 0;font-weight:900;font-size:1.08em;">الإجمالي:</td>
+    <td style="text-align:left;padding:2px 0;font-weight:900;font-size:1.08em;word-break:break-word;">${fmt(total)}</td>
+  </tr>`;
+  totRows += row2('المدفوع:', fmt(paid));
   if (change > 0.004) {
-    totBlock += totRow('الباقي:', fmt(change), false, '#1a7a3c');
+    totRows += row2('الباقي:', `<span style="color:#1a6b2e;font-weight:700;">${fmt(change)}</span>`);
   }
-
-  // الدين — خط عريض وأحمر
   if (isDebt && debtAmt > 0.004) {
-    totBlock += totRow('الدين:', fmt(debtAmt), true, '#c53030');
+    totRows += `<tr>
+      <td style="text-align:right;padding:2px 0;font-weight:900;color:#c53030;">الدين:</td>
+      <td style="text-align:left;padding:2px 0;font-weight:900;color:#c53030;word-break:break-word;">${fmt(debtAmt)}</td>
+    </tr>`;
   }
 
-  // ────────────────────────────────────────────────────────
+  // ════════════════════════════════════════
   // ⑤ رسالة الشكر
-  // ────────────────────────────────────────────────────────
-  let welcomeHtml = '';
+  // ════════════════════════════════════════
+  let welcome = '';
   if (show('printWelcome') && cfg.storeWelcome) {
-    welcomeHtml = `
-  <div style="text-align:center;font-size:0.9rem;font-weight:700;
-               margin:4px 0 2px;">${esc(cfg.storeWelcome)}</div>`;
+    welcome = `<div style="text-align:center;font-weight:700;margin:4px 0 2px;">
+                 ${esc(cfg.storeWelcome)}
+               </div>`;
   }
 
-  // ────────────────────────────────────────────────────────
-  // ⑥ باركود الفاتورة
-  // ────────────────────────────────────────────────────────
-  let barcodeBlock = '';
+  // ════════════════════════════════════════
+  // ⑥ باركود
+  // ════════════════════════════════════════
+  let barcode = '';
   if (show('printBarcode') && sale.invoiceNumber) {
-    const bcode = String(sale.invoiceNumber).replace(/[^A-Za-z0-9#\-]/g, '');
-    if (bcode) {
-      barcodeBlock = `
-  <div style="text-align:center;margin:3px 0 2px;">
+    const bc = String(sale.invoiceNumber).replace(/[^A-Za-z0-9#\-]/g, '');
+    if (bc) {
+      barcode = `<div style="text-align:center;margin:3px 0 2px;">
     <svg id="_invBC" style="display:block;margin:0 auto;"></svg>
-    <div style="font-size:0.78rem;font-family:'Courier New',monospace;
+    <div style="font-family:'Courier New',monospace;font-size:0.82em;
                 letter-spacing:3px;margin-top:1px;">${esc(sale.invoiceNumber)}</div>
   </div>
   <script>
     (function(){
       if(typeof JsBarcode!=='undefined'){
         try{
-          JsBarcode('#_invBC','${bcode}',{
+          JsBarcode('#_invBC','${bc}',{
             format:'CODE128',width:1.6,height:42,
             displayValue:false,margin:0,
             background:'#fff',lineColor:'#000'
@@ -807,171 +738,117 @@ function _buildReceiptHTML({ sale, items, cfg, cur, fmt, fmtNum, fmtDate, widthM
     }
   }
 
-  // ────────────────────────────────────────────────────────
-  // ⑦ تجميع HTML الكامل
-  // ────────────────────────────────────────────────────────
+  // ════════════════════════════════════════
+  // ⑦ HTML الكامل
+  // ════════════════════════════════════════
   const needBC = show('printBarcode');
 
-  // الهامش: 2mm كل جانب → محتوى 76mm في ورق 80mm
-  // top: 3mm  |  sides: 2mm  |  bottom: 5mm
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8">
-  ${needBC ? `<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>` : ''}
-  <style>
-    /* ── reset شامل ── */
-    *, *::before, *::after {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    /* ── إعداد الصفحة ── */
-    @page {
-      size: ${widthMM}mm auto;
-      margin: 0;
-    }
-
-    html, body {
-      width: ${widthMM}mm;
-      background: #fff;
-      color: #000;
-    }
-
-    body {
-      /* هامش 2mm كل جانب — محتوى 76mm */
-      padding: 3mm 2mm 5mm 2mm;
-      font-family: 'Tahoma', 'Arial', sans-serif;
-      font-size: 0.83rem;
-      direction: rtl;
-      /* منع أي overflow */
-      overflow: hidden;
-    }
-
-    /* ── فاصلات ── */
-    .s1 {
-      border: none;
-      border-top: 1px dashed #444;
-      margin: 4px 0;
-    }
-    .s2 {
-      border: none;
-      border-top: 2px solid #000;
-      margin: 4px 0;
-    }
-    .sdash {
-      border: none;
-      border-top: 1px dashed #444;
-      margin-top: 5px;
-    }
-
-    /* ── جدول المنتجات ── */
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      direction: rtl;
-    }
-    th {
-      font-size: 0.8rem;
-      font-weight: 900;
-      padding: 2px 0;
-      border-bottom: 1px solid #000;
-    }
-    td {
-      font-size: 0.8rem;
-      padding: 2px 0;
-      vertical-align: top;
-    }
-    /* أعمدة الجدول — RTL: أول عمود يمين */
-    .c-prod  {
-      text-align: right;
-      width: 42%;
-      word-break: break-word;
-      padding-right: 0;
-    }
-    .c-qty   {
-      text-align: center;
-      width: 8%;
-      white-space: nowrap;
-    }
-    .c-price {
-      text-align: center;
-      width: 22%;
-      white-space: nowrap;
-    }
-    .c-total {
-      text-align: left;
-      width: 28%;
-      white-space: nowrap;
-      font-weight: 700;
-      direction: ltr;
-    }
-
-    @media print {
-      @page { size: ${widthMM}mm auto; margin: 0; }
-      html, body { width: ${widthMM}mm; }
-      body { padding: 2mm 2mm 4mm 2mm; }
-    }
-  </style>
+<meta charset="UTF-8">
+${needBC ? `<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>` : ''}
+<style>
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+@page { size:${widthMM}mm auto; margin:0; }
+html, body { width:${widthMM}mm; background:#fff; color:#000; }
+body {
+  padding: 3mm 2mm 5mm 2mm;
+  font-family: 'Tahoma','Arial',sans-serif;
+  font-size: 12px;
+  direction: rtl;
+}
+/* جداول التخطيط */
+.t2 {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+/* جدول المنتجات */
+.ti {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.ti th, .ti td { font-size:11.5px; padding:2px 0; vertical-align:top; }
+.ti th { font-weight:900; }
+/* فاصلات */
+.d1 { border:none; border-top:1px dashed #555; margin:4px 0; }
+.d2 { border:none; border-top:2px solid  #000; margin:4px 0; }
+.db { border:none; border-top:1px dashed #555; margin-top:6px; }
+@media print {
+  @page { size:${widthMM}mm auto; margin:0; }
+  body  { padding:2mm 2mm 4mm 2mm; }
+}
+</style>
 </head>
 <body>
 
-  <!-- ① رأس: رقم الفاتورة (يمين) — التاريخ (يسار) + البائع + الزبون -->
-  ${topBlock}
+<!-- ① رأس الفاتورة -->
+<table class="t2">
+  <colgroup><col style="width:50%;"><col style="width:50%;"></colgroup>
+  <tbody>${headRows}</tbody>
+</table>
 
-  <hr class="s2">
+<hr class="d2">
 
-  <!-- ② اسم المتجر -->
-  ${storeBlock}
+<!-- ② اسم المتجر -->
+${storeBlock}
 
-  <hr class="s2">
+<hr class="d2">
 
-  <!-- ③ جدول المنتجات -->
-  <table>
-    <thead>
-      <tr>
-        <th class="c-prod">المنتج</th>
-        <th class="c-qty">ك</th>
-        <th class="c-price">السعر</th>
-        <th class="c-total">المجموع</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${itemsRows}
-    </tbody>
-  </table>
+<!-- ③ جدول المنتجات -->
+<table class="ti">
+  <colgroup>
+    <col style="width:42%;">
+    <col style="width:8%;">
+    <col style="width:22%;">
+    <col style="width:28%;">
+  </colgroup>
+  <thead>
+    <tr style="border-bottom:1px solid #000;">
+      <th style="text-align:right;">المنتج</th>
+      <th style="text-align:center;">ك</th>
+      <th style="text-align:center;">السعر</th>
+      <th style="text-align:left;">المجموع</th>
+    </tr>
+  </thead>
+  <tbody>${itemRows}</tbody>
+</table>
 
-  <hr class="s1">
+<hr class="d1">
 
-  <!-- ④ المجاميع -->
-  ${totBlock}
+<!-- ④ المجاميع -->
+<table class="t2">
+  <colgroup><col style="width:50%;"><col style="width:50%;"></colgroup>
+  <tbody>${totRows}</tbody>
+</table>
 
-  <hr class="s2">
+<hr class="d2">
 
-  <!-- ⑤ رسالة الشكر -->
-  ${welcomeHtml}
+<!-- ⑤ رسالة الشكر -->
+${welcome}
 
-  <!-- ⑥ باركود -->
-  ${barcodeBlock}
+<!-- ⑥ باركود -->
+${barcode}
 
-  <!-- ⑦ فاصل سفلي -->
-  <hr class="sdash">
+<!-- ⑦ فاصل سفلي -->
+<hr class="db">
 
-  <script>
-    window.addEventListener('load', function() {
-      setTimeout(function() {
-        window.print();
-        window.onafterprint = function() { window.close(); };
-        setTimeout(function() { window.close(); }, 25000);
-      }, 450);
-    });
-  <\/script>
+<script>
+window.addEventListener('load',function(){
+  setTimeout(function(){
+    window.print();
+    window.onafterprint=function(){window.close();};
+    setTimeout(function(){window.close();},25000);
+  },450);
+});
+<\/script>
 </body>
 </html>`;
 }
+
 /**
- * محاولة إرسال الفاتورة للسيرفر
  * @returns {boolean} true إذا نجح الإرسال
  */
 async function _trySendToServer(html, cfg, type) {
