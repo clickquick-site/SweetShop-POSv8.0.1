@@ -1832,7 +1832,9 @@ async function confirmSale(print = true) {
         customerPhone: customer ? customer.phone : ''
       };
       
-      await printInvoice(sale, cart);
+      if (typeof window.printInvoice === 'function') {
+        await window.printInvoice(sale, cart);
+      }
     }
     
     window.modalManager.close('checkoutModal');
@@ -2054,7 +2056,27 @@ async function viewInvoiceDetail(saleId) {
 }
 
 async function printCurrentInvoice() {
-  // سيتم تنفيذها لاحقاً
+  if (!lastSaleId) {
+    window.toast.show('لا توجد فاتورة حالية للطباعة', 'info');
+    return;
+  }
+  try {
+    const sale  = await window.dbManager.get('sales', lastSaleId);
+    const items = await window.dbManager.getAll('saleItems', { index: 'saleId', value: lastSaleId });
+    if (!sale) { window.toast.show('لم يتم العثور على الفاتورة', 'error'); return; }
+    const customer = allCustomers.find(c => c.id === sale.customerId);
+    sale.customerName  = customer ? customer.name  : '';
+    sale.customerPhone = customer ? customer.phone : '';
+    // printInvoice مُصدَّرة من print.js → window.printInvoice
+    if (typeof window.printInvoice === 'function') {
+      await window.printInvoice(sale, items);
+    } else {
+      window.toast.show('⚠️ وحدة الطباعة غير محمّلة', 'error');
+    }
+  } catch (e) {
+    console.error('خطأ في طباعة الفاتورة:', e);
+    window.toast.show('❌ فشل في الطباعة', 'error');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2246,7 +2268,11 @@ async function reprintLastInvoice() {
   sale.customerName = customer ? customer.name : '';
   sale.customerPhone = customer ? customer.phone : '';
   
-  await printInvoice(sale, items);
+  if (typeof window.printInvoice === 'function') {
+    await window.printInvoice(sale, items);
+  } else {
+    window.toast.show('⚠️ وحدة الطباعة غير محمّلة', 'error');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
