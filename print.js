@@ -71,10 +71,21 @@ window._inputDialog = _inputDialog;
 const POSDZ_PRINT = (() => {
 
   const SIZE_MAP = {
-    '58x38': { w: 58, h: 38 }, '58x30': { w: 58, h: 30 },
-    '58x20': { w: 58, h: 20 }, '40x30': { w: 40, h: 30 },
-    '40x25': { w: 40, h: 25 }, '40x20': { w: 40, h: 20 },
-    '38x25': { w: 38, h: 25 }, '30x20': { w: 30, h: 20 },
+    // الأحجام المطلوبة (عرض × ارتفاع بالـ mm)
+    '20x30': { w: 20, h: 30 },
+    '20x40': { w: 20, h: 40 },
+    '25x38': { w: 25, h: 38 },
+    '25x40': { w: 25, h: 40 },
+    '30x40': { w: 30, h: 40 },
+    '20x58': { w: 20, h: 58 },
+    '30x58': { w: 30, h: 58 },
+    // أحجام إضافية متوافقة
+    '40x20': { w: 40, h: 20 },
+    '40x25': { w: 40, h: 25 },
+    '40x30': { w: 40, h: 30 },
+    '58x20': { w: 58, h: 20 },
+    '58x30': { w: 58, h: 30 },
+    '58x38': { w: 58, h: 38 },
   };
   const DPI = 203, MM2INCH = 25.4;
   const mm2px = mm => Math.round((mm / MM2INCH) * DPI);
@@ -119,12 +130,15 @@ const POSDZ_PRINT = (() => {
     ctx.fillRect(cx, y, uw, h); cx += uw*2; ctx.fillRect(cx, y, uw, h);
   }
   async function _drawLabel(product, opts) {
-    const { sName, cur, bcFont, bcType, showStore, showName, showPrice, size, bv } = opts;
+    const { sName, cur, bcFont, bcType, showStore, showName, showPrice, size, bv, fs } = opts;
     const W = mm2px(size.w), H = mm2px(size.h), P = mm2px(0.7);
-    const baseFS = Math.round(H * 0.13);
-    const FS = Math.max(12, Math.min(40, baseFS));
-    const FSS = Math.max(10, FS - 3), FSP = Math.max(12, FS);
-    const FSN = Math.max(9, Math.round(FS*0.75)), FSR = Math.max(14, Math.round(FS*1.2));
+
+    // ── حجم الخط: يُحدَّد من الإعداد fs، لا من حجم الملصق ──────
+    // الباركود نفسه يأخذ المساحة المتبقية بعد النص
+    const FSS = Math.max(8,  Math.min(40, fs));          // اسم المتجر
+    const FSP = Math.max(9,  Math.min(40, fs + 1));      // اسم المنتج
+    const FSN = Math.max(7,  Math.min(30, fs - 2));      // رقم الباركود
+    const FSR = Math.max(10, Math.min(40, fs + 2));      // السعر
     const font = '"'+(bcFont||'Arial')+'", Arial, sans-serif';
     const cv = document.createElement('canvas');
     cv.width = W; cv.height = H;
@@ -225,9 +239,9 @@ const POSDZ_PRINT = (() => {
     const copies=Math.max(1,Math.min(999,parseInt(qty)||1));
     const bv=(product.barcode||String(product.id||'')).trim();
     if (!bv){if(typeof toast==='function')toast('لا يوجد باركود للمنتج','warning');return;}
-    const [sName,cur,bcFont,bcType,showStore,showName,showPrice,rawSize,rawFs]=await Promise.all(['storeName','currency','barcodeFont','barcodeType','barcodeShowStore','barcodeShowName','barcodeShowPrice','barcodeLabelSize','barcodeFontSize'].map(k=>getSetting(k)));
-    const size=SIZE_MAP[rawSize||'40x20']||SIZE_MAP['40x20'];
-    const fs=Math.max(7,Math.min(24,parseInt(rawFs)||9));
+    const [sName,cur,bcFont,bcType,showStore,showName,showPrice,rawSize,rawFs]=await Promise.all(['storeName','currency','barcodeFont','barcodeType','barcodeShowStore','barcodeShowName','barcodeShowPrice','barcodeSize','barcodeFontSize'].map(k=>getSetting(k)));
+    const size=SIZE_MAP[rawSize||'30x40']||SIZE_MAP['30x40']||{w:30,h:40};
+    const fs=Math.max(7,Math.min(40,parseInt(rawFs)||10));
     await _loadBC();
     const opts={sName,cur,bcFont,bcType,showStore,showName,showPrice,size,fs,bv};
     const canvas=await _drawLabel(product,opts);
