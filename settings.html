@@ -555,6 +555,7 @@
       color: var(--danger);
     }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 </head>
 <body>
 <div class="bg-animated"></div>
@@ -946,35 +947,44 @@
       </div>
 
       <!-- ========== تبويب: الطباعة ========== -->
+      <!-- ========== تبويب: الطباعة ========== -->
       <div class="tab-content" id="tab-print">
         <div class="settings-grid">
-          <!-- إعدادات الفاتورة -->
+
+          <!-- ── إعدادات الفاتورة ── -->
           <div class="settings-card">
             <div class="card-header">
               <i class="fa-solid fa-file-invoice"></i>
               <h3>إعدادات الفاتورة</h3>
             </div>
             <div class="card-body">
+
+              <!-- طابعة الفواتير -->
               <div class="setting-row">
                 <div class="setting-info">
                   <div class="setting-label">
                     <i class="fa-solid fa-print"></i>
                     <span>طابعة الفواتير</span>
                   </div>
+                  <div class="setting-desc">لإضافة طابعة انتقل لإعدادات الحاسوب</div>
                 </div>
                 <div class="setting-control">
-                  <div class="printer-card" id="invoicePrinterCard" onclick="choosePrinter('invoice')">
-                    <div class="printer-icon">
-                      <i class="fa-solid fa-print"></i>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <div class="printer-card" id="invoicePrinterCard" onclick="POSDZ_PRINT.choosePrinter('invoice')" style="flex:1;min-width:180px;">
+                      <div class="printer-icon"><i class="fa-solid fa-print"></i></div>
+                      <div class="printer-info">
+                        <div class="printer-name" id="invoicePrinterName">الطابعة الافتراضية</div>
+                        <div class="printer-desc">اضغط لاختيار طابعة</div>
+                      </div>
                     </div>
-                    <div class="printer-info">
-                      <div class="printer-name" id="invoicePrinterName">الطابعة الافتراضية</div>
-                      <div class="printer-desc">اضغط لاختيار طابعة مختلفة</div>
-                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="openSystemPrinters()" title="إعدادات الطابعات في الحاسوب">
+                      <i class="fa-solid fa-gear"></i>
+                    </button>
                   </div>
                 </div>
               </div>
 
+              <!-- حجم الورق: 58mm / 80mm فقط -->
               <div class="setting-row">
                 <div class="setting-info">
                   <div class="setting-label">
@@ -983,15 +993,36 @@
                   </div>
                 </div>
                 <div class="setting-control">
-                  <select class="form-select" id="paperSize">
-                    <option value="58mm">58 مم - فواتير حرارية صغيرة</option>
-                    <option value="80mm">80 مم - فواتير حرارية عادية</option>
-                    <option value="A5">A5</option>
-                    <option value="A4">A4</option>
+                  <select class="form-select" id="paperSize" onchange="updateInvoicePreview()">
+                    <option value="58mm">58 مم — حراري صغير</option>
+                    <option value="80mm" selected>80 مم — حراري عادي</option>
                   </select>
                 </div>
               </div>
 
+              <!-- رقم الفاتورة الابتدائي -->
+              <div class="setting-row">
+                <div class="setting-info">
+                  <div class="setting-label">
+                    <i class="fa-solid fa-hashtag"></i>
+                    <span>رقم الفاتورة الحالي</span>
+                  </div>
+                  <div class="setting-desc">يُغيَّر عند الحاجة — سيُستأنف من هذا الرقم</div>
+                </div>
+                <div class="setting-control">
+                  <div style="display:flex;gap:8px;align-items:center;">
+                    <span style="color:var(--text-secondary);font-size:0.9em;">#</span>
+                    <input type="number" class="form-input" id="invoiceStartNumber"
+                           min="1" max="9999" step="1" placeholder="001"
+                           style="width:90px;text-align:center;" />
+                    <button class="btn btn-secondary btn-sm" onclick="applyInvoiceNumber()">
+                      <i class="fa-solid fa-check"></i> تطبيق
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- محتويات الفاتورة -->
               <div class="setting-row">
                 <div class="setting-info">
                   <div class="setting-label">
@@ -1000,113 +1031,134 @@
                   </div>
                 </div>
                 <div class="setting-control">
-                  <div style="display:flex; flex-direction:column; gap:8px;">
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="printLogo"> <span>طباعة الشعار</span>
+                  <div style="display:flex;flex-direction:column;gap:8px;">
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="printLogo" onchange="updateInvoicePreview()">
+                      <span>طباعة الشعار</span>
                     </label>
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="printName"> <span>طباعة اسم المتجر</span>
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="printName" onchange="updateInvoicePreview()">
+                      <span>طباعة اسم المتجر</span>
                     </label>
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="printPhone"> <span>طباعة رقم الهاتف</span>
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="printPhone" onchange="updateInvoicePreview()">
+                      <span>طباعة رقم الهاتف</span>
                     </label>
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="printAddress"> <span>طباعة العنوان</span>
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="printAddress" onchange="updateInvoicePreview()">
+                      <span>طباعة العنوان</span>
                     </label>
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="printWelcome"> <span>طباعة رسالة الترحيب</span>
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="printWelcome" onchange="updateInvoicePreview()">
+                      <span>طباعة رسالة الترحيب</span>
                     </label>
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="printBarcode"> <span>طباعة باركود الفاتورة</span>
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="printBarcode" onchange="updateInvoicePreview()">
+                      <span>طباعة باركود الفاتورة</span>
                     </label>
                   </div>
                 </div>
               </div>
 
-              <button class="btn btn-primary" style="width:100%; margin-top:15px;" onclick="testPrintInvoice()">
+              <button class="btn btn-primary" style="width:100%;margin-top:15px;" onclick="testPrintInvoice()">
                 <i class="fa-solid fa-print"></i> طباعة تجريبية
               </button>
             </div>
           </div>
 
-          <!-- معاينة الفاتورة -->
+          <!-- ── معاينة الفاتورة الحية ── -->
           <div class="settings-card">
             <div class="card-header">
               <i class="fa-solid fa-eye"></i>
               <h3>معاينة الفاتورة</h3>
             </div>
-            <div class="card-body">
-              <div class="preview-box" id="invoicePreview">
-                ═══════════════════════════════
-                     اسم المتجر
-                  📞 0550 00 00 00
-                ═══════════════════════════════
-                فاتورة: #001
-                التاريخ: 12/03/2026
-                ═══════════════════════════════
-                المنتج          ك  السعر  المجموع
-                ───────────────────────────────
-                منتج 1          2  150.00  300.00
-                منتج 2          1  200.00  200.00
-                ═══════════════════════════════
-                الإجمالي: 500.00 دج
-                ═══════════════════════════════
-                شكراً لزيارتكم
+            <div class="card-body" style="display:flex;justify-content:center;">
+              <!-- الورقة الحرارية المصغَّرة -->
+              <div id="invoiceLivePreview" style="
+                background:#fff;color:#000;
+                width:180px;
+                padding:8px 6px 12px;
+                font-family:'Tahoma','Arial',sans-serif;
+                font-size:7px;
+                direction:rtl;
+                border:1px solid #ccc;
+                box-shadow:2px 2px 8px rgba(0,0,0,0.3);
+                line-height:1.4;
+                min-height:200px;
+              ">
+                <!-- سيتم ملؤه بـ updateInvoicePreview() -->
               </div>
             </div>
           </div>
+
         </div>
       </div>
 
       <!-- ========== تبويب: الباركود ========== -->
       <div class="tab-content" id="tab-barcode">
         <div class="settings-grid">
-          <!-- إعدادات الباركود -->
+
+          <!-- ── إعدادات الباركود ── -->
           <div class="settings-card">
             <div class="card-header">
               <i class="fa-solid fa-barcode"></i>
               <h3>إعدادات الباركود</h3>
             </div>
             <div class="card-body">
+
+              <!-- طابعة الباركود -->
               <div class="setting-row">
                 <div class="setting-info">
                   <div class="setting-label">
                     <i class="fa-solid fa-print"></i>
                     <span>طابعة الباركود</span>
                   </div>
+                  <div class="setting-desc">لإضافة طابعة انتقل لإعدادات الحاسوب</div>
                 </div>
                 <div class="setting-control">
-                  <div class="printer-card" id="barcodePrinterCard" onclick="choosePrinter('barcode')">
-                    <div class="printer-icon">
-                      <i class="fa-solid fa-barcode"></i>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <div class="printer-card" id="barcodePrinterCard" onclick="POSDZ_PRINT.choosePrinter('barcode')" style="flex:1;min-width:180px;">
+                      <div class="printer-icon"><i class="fa-solid fa-barcode"></i></div>
+                      <div class="printer-info">
+                        <div class="printer-name" id="barcodePrinterName">الطابعة الافتراضية</div>
+                        <div class="printer-desc">اضغط لاختيار طابعة</div>
+                      </div>
                     </div>
-                    <div class="printer-info">
-                      <div class="printer-name" id="barcodePrinterName">الطابعة الافتراضية</div>
-                      <div class="printer-desc">اضغط لاختيار طابعة مختلفة</div>
-                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="openSystemPrinters()" title="إعدادات الطابعات في الحاسوب">
+                      <i class="fa-solid fa-gear"></i>
+                    </button>
                   </div>
                 </div>
               </div>
 
+              <!-- حجم الملصق -->
               <div class="setting-row">
                 <div class="setting-info">
                   <div class="setting-label">
                     <i class="fa-regular fa-rectangle-ad"></i>
-                    <span>حجم الملصق</span>
+                    <span>حجم الملصق (عرض × ارتفاع)</span>
                   </div>
                 </div>
                 <div class="setting-control">
-                  <select class="form-select" id="barcodeSize">
+                  <select class="form-select" id="barcodeSize" onchange="updateBarcodePreview()">
+                    <option value="20x30">20 × 30 مم</option>
+                    <option value="20x40">20 × 40 مم</option>
+                    <option value="25x38">25 × 38 مم</option>
+                    <option value="25x40">25 × 40 مم</option>
+                    <option value="30x40" selected>30 × 40 مم</option>
                     <option value="40x20">40 × 20 مم</option>
-                    <option value="58x38">58 × 38 مم</option>
-                    <option value="58x30">58 × 30 مم</option>
+                    <option value="40x25">40 × 25 مم</option>
+                    <option value="40x30">40 × 30 مم</option>
+                    <option value="20x58">20 × 58 مم</option>
+                    <option value="30x58">30 × 58 مم</option>
                     <option value="58x20">58 × 20 مم</option>
-                    <option value="38x25">38 × 25 مم</option>
-                    <option value="30x20">30 × 20 مم</option>
+                    <option value="58x30">58 × 30 مم</option>
+                    <option value="58x38">58 × 38 مم</option>
                   </select>
                 </div>
               </div>
 
+              <!-- نوع الباركود -->
               <div class="setting-row">
                 <div class="setting-info">
                   <div class="setting-label">
@@ -1115,32 +1167,34 @@
                   </div>
                 </div>
                 <div class="setting-control">
-                  <select class="form-select" id="barcodeType">
-                    <option value="CODE128">CODE 128</option>
-                    <option value="EAN13">EAN-13</option>
-                    <option value="EAN8">EAN-8</option>
-                    <option value="UPCA">UPC-A</option>
-                    <option value="QR">QR Code</option>
+                  <select class="form-select" id="barcodeType" onchange="updateBarcodePreview()">
+                    <option value="CODE128">CODE 128 (افتراضي)</option>
+                    <option value="EAN13">EAN-13 (13 رقم)</option>
+                    <option value="EAN8">EAN-8 (8 أرقام)</option>
+                    <option value="UPCA">UPC-A (12 رقم)</option>
                   </select>
                 </div>
               </div>
 
+              <!-- حجم خط النص فقط (الباركود لا يتغير حجمه) -->
               <div class="setting-row">
                 <div class="setting-info">
                   <div class="setting-label">
                     <i class="fa-solid fa-font"></i>
-                    <span>حجم الخط</span>
+                    <span>حجم خط النص</span>
                   </div>
+                  <div class="setting-desc">يؤثر على النص والأرقام فقط — الباركود ثابت</div>
                 </div>
                 <div class="setting-control">
                   <div class="font-size-control">
                     <button class="font-size-btn" onclick="changeBarcodeFontSize(-1)">−</button>
-                    <span class="font-size-value" id="barcodeFontSize">12</span>
+                    <span class="font-size-value" id="barcodeFontSize">10</span>
                     <button class="font-size-btn" onclick="changeBarcodeFontSize(1)">+</button>
                   </div>
                 </div>
               </div>
 
+              <!-- محتويات الملصق -->
               <div class="setting-row">
                 <div class="setting-info">
                   <div class="setting-label">
@@ -1149,39 +1203,55 @@
                   </div>
                 </div>
                 <div class="setting-control">
-                  <div style="display:flex; flex-direction:column; gap:8px;">
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="barcodeShowStore"> <span>اسم المتجر</span>
+                  <div style="display:flex;flex-direction:column;gap:8px;">
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="barcodeShowStore" onchange="updateBarcodePreview()">
+                      <span>اسم المتجر</span>
                     </label>
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="barcodeShowName"> <span>اسم المنتج</span>
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="barcodeShowName" checked onchange="updateBarcodePreview()">
+                      <span>اسم المنتج</span>
                     </label>
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" id="barcodeShowPrice"> <span>السعر</span>
+                    <label style="display:flex;align-items:center;gap:8px;">
+                      <input type="checkbox" id="barcodeShowPrice" checked onchange="updateBarcodePreview()">
+                      <span>السعر</span>
                     </label>
                   </div>
                 </div>
               </div>
+
             </div>
           </div>
 
-          <!-- معاينة الباركود -->
+          <!-- ── معاينة الباركود الحية ── -->
           <div class="settings-card">
             <div class="card-header">
               <i class="fa-solid fa-eye"></i>
-              <h3>معاينة الباركود</h3>
+              <h3>معاينة الملصق</h3>
             </div>
-            <div class="card-body">
-              <div class="barcode-preview" id="barcodePreview">
-                <div id="barcodeStoreName" style="font-weight:bold; margin-bottom:5px;">POS DZ</div>
-                <div id="barcodeProductName" style="font-size:14px; margin-bottom:5px;">منتج تجريبي</div>
-                <div class="barcode-bars" id="barcodeBars"></div>
-                <div id="barcodeNumber" style="font-family:monospace; margin:5px 0;">1234567890</div>
-                <div id="barcodePrice" style="font-weight:bold; font-size:16px;">150.00 دج</div>
+            <div class="card-body" style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+
+              <!-- حاوية المعاينة: نسبة أبعاد الملصق -->
+              <div style="position:relative;background:#f0f0f0;padding:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;min-height:160px;width:100%;">
+                <div id="bcPreviewWrap" style="
+                  background:#fff;
+                  box-shadow:0 2px 8px rgba(0,0,0,0.3);
+                  overflow:hidden;
+                  display:flex;align-items:center;justify-content:center;
+                ">
+                  <canvas id="bcPreviewCanvas" style="display:block;image-rendering:crisp-edges;"></canvas>
+                </div>
               </div>
+
+              <!-- معلومات الحجم -->
+              <div id="bcSizeInfo" style="font-size:0.78rem;color:var(--text-secondary);text-align:center;"></div>
+
             </div>
           </div>
+
         </div>
+      </div>
+
       </div>
 
       <!-- ========== تبويب: المزامنة ========== -->
@@ -1719,7 +1789,7 @@
 let currentTheme = 'blue_purple';
 let currentBgMode = 'dark';
 let currentFontSize = 15;
-let currentBarcodeFontSize = 12;
+let currentBarcodeFontSize = 10;
 
 // ============================================================
 //  التهيئة
@@ -1737,7 +1807,7 @@ async function init() {
   // تحديث الواجهة
   updateThemePreview();
   updateFontPreview();
-  updateBarcodePreview();
+  // المعاينات تُشغَّل داخل loadSettings بعد تحميل القيم
   
   console.log('✅ صفحة الإعدادات جاهزة');
 }
@@ -1829,6 +1899,19 @@ async function loadSettings() {
     document.getElementById('barcodePrinterName').textContent = barcodePrinter;
     document.getElementById('barcodePrinterCard').classList.add('selected');
   }
+
+  // ── تحميل رقم الفاتورة الحالي من IndexedDB ────────────────
+  try {
+    const ctr = await window.dbManager.get('counter', 1);
+    if (ctr && ctr.number) {
+      const el = document.getElementById('invoiceStartNumber');
+      if (el) el.placeholder = String(ctr.number).padStart(3, '0');
+    }
+  } catch (_) {}
+
+  // ── تشغيل المعاينتين ──────────────────────────────────────
+  updateInvoicePreview();
+  updateBarcodePreview();
 }
 
 // ============================================================
@@ -1878,110 +1961,297 @@ function updateFontPreview() {
 //  إعدادات الباركود
 // ============================================================
 function changeBarcodeFontSize(delta) {
-  currentBarcodeFontSize = Math.max(6, Math.min(24, currentBarcodeFontSize + delta));
+  currentBarcodeFontSize = Math.max(6, Math.min(40, currentBarcodeFontSize + delta));
   document.getElementById('barcodeFontSize').textContent = currentBarcodeFontSize;
   updateBarcodePreview();
 }
 
-function updateBarcodePreview() {
-  const showStore = document.getElementById('barcodeShowStore').checked;
-  const showName = document.getElementById('barcodeShowName').checked;
-  const showPrice = document.getElementById('barcodeShowPrice').checked;
-  const type = document.getElementById('barcodeType').value;
-  
-  document.getElementById('barcodeStoreName').style.display = showStore ? 'block' : 'none';
-  document.getElementById('barcodeProductName').style.display = showName ? 'block' : 'none';
-  document.getElementById('barcodePrice').style.display = showPrice ? 'block' : 'none';
-  
-  // إنشاء باركود تجريبي
-  const bars = document.getElementById('barcodeBars');
-  bars.innerHTML = '';
-  
-  if (type === 'QR') {
-    // محاكاة QR code بسيط
-    for (let i = 0; i < 64; i++) {
-      const bar = document.createElement('div');
-      bar.className = 'barcode-bar';
-      bar.style.height = Math.random() * 20 + 10 + 'px';
-      bars.appendChild(bar);
-    }
+// ============================================================
+//  معاينة الباركود الحية — canvas حقيقي بـ JsBarcode
+// ============================================================
+let _bcPreviewTimer = null;
+
+async function updateBarcodePreview() {
+  // debounce: لا نُعيد رسم إلا بعد 80ms من آخر تغيير
+  clearTimeout(_bcPreviewTimer);
+  _bcPreviewTimer = setTimeout(_drawBcPreview, 80);
+}
+
+async function _drawBcPreview() {
+  const canvas  = document.getElementById('bcPreviewCanvas');
+  const wrap    = document.getElementById('bcPreviewWrap');
+  const sizeInfo= document.getElementById('bcSizeInfo');
+  if (!canvas || !wrap) return;
+
+  const rawSize   = document.getElementById('barcodeSize')?.value || '30x40';
+  const bcType    = document.getElementById('barcodeType')?.value || 'CODE128';
+  const showStore = document.getElementById('barcodeShowStore')?.checked;
+  const showName  = document.getElementById('barcodeShowName')?.checked;
+  const showPrice = document.getElementById('barcodeShowPrice')?.checked;
+  const fs        = currentBarcodeFontSize;
+
+  // ── أبعاد الملصق ──────────────────────────────────────────
+  const SIZES = {
+    '20x30':{w:20,h:30},'20x40':{w:20,h:40},'25x38':{w:25,h:38},
+    '25x40':{w:25,h:40},'30x40':{w:30,h:40},'40x20':{w:40,h:20},
+    '40x25':{w:40,h:25},'40x30':{w:40,h:30},'20x58':{w:20,h:58},
+    '30x58':{w:30,h:58},'58x20':{w:58,h:20},'58x30':{w:58,h:30},
+    '58x38':{w:58,h:38},
+  };
+  const sz = SIZES[rawSize] || {w:30,h:40};
+
+  // ── حجم الرسم: نكبّر للعرض (96dpi → mm * 3.78) ──────────
+  const SCALE = 3.0;  // px per mm في المعاينة
+  const DPI   = 203, MM2IN = 25.4;
+  const mm2px = mm => Math.round((mm / MM2IN) * DPI);
+
+  const CW = Math.round(sz.w * SCALE);
+  const CH = Math.round(sz.h * SCALE);
+  const P  = Math.round(0.7 * SCALE);
+
+  canvas.width  = CW;
+  canvas.height = CH;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, CW, CH);
+  ctx.fillStyle = '#000';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  const storeName  = (await window.getSetting('storeName')) || 'اسم المتجر';
+  const currency   = (await window.getSetting('currency'))  || 'DA';
+  const sampleCode = '1234567890';
+  const sampleName = 'منتج تجريبي';
+  const samplePrice= '150 ' + currency;
+
+  const font = '"Tahoma","Arial",sans-serif';
+  const FSS  = Math.max(6, fs - 2);
+  const FSP  = Math.max(7, fs);
+  const FSN  = Math.max(5, fs - 3);
+  const FSR  = Math.max(8, fs + 2);
+
+  let y = P;
+
+  // اسم المتجر
+  if (showStore) {
+    ctx.font = '800 ' + FSS + 'px ' + font;
+    ctx.fillText(storeName, CW / 2, y);
+    y += FSS + P * 0.5;
+  }
+  // اسم المنتج
+  if (showName) {
+    ctx.font = '900 ' + FSP + 'px ' + font;
+    ctx.fillText(sampleName, CW / 2, y);
+    y += FSP + P * 0.5;
+  }
+
+  // المساحة المتبقية للباركود
+  const botH = P + FSN + P * 0.5 + (showPrice ? FSR + P * 0.5 : 0);
+  const bH   = Math.max(Math.round(3 * SCALE), CH - y - botH - P);
+  const bW   = CW - P * 2;
+
+  // ── رسم الباركود بـ JsBarcode ─────────────────────────────
+  let bcDrawn = false;
+  if (typeof JsBarcode !== 'undefined' && bcType !== 'QR') {
+    try {
+      const tmp = document.createElement('canvas');
+      const xd  = Math.max(1, Math.floor(bW / 95));
+      JsBarcode(tmp, sampleCode, {
+        format: bcType, width: xd, height: bH,
+        displayValue: false, margin: 0,
+        background: '#fff', lineColor: '#000'
+      });
+      if (tmp.width > 0) {
+        ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, P, y, bW, bH);
+        bcDrawn = true;
+      }
+    } catch (e) {}
+  }
+  if (!bcDrawn) {
+    // fallback بسيط
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+    ctx.strokeRect(P, y, bW, bH);
+    ctx.font = '700 ' + FSN + 'px monospace';
+    ctx.fillText('[BARCODE]', CW / 2, y + bH / 2 - FSN / 2);
+  }
+  y += bH + P * 0.3;
+
+  // رقم الباركود
+  ctx.font = '700 ' + FSN + 'px "Courier New",monospace';
+  ctx.fillText(sampleCode, CW / 2, y);
+  y += FSN + P * 0.4;
+
+  // السعر
+  if (showPrice) {
+    ctx.font = '900 ' + FSR + 'px ' + font;
+    ctx.fillText(samplePrice, CW / 2, y);
+  }
+
+  // ── ضبط حجم الحاوية بنسبة الأبعاد الحقيقية ───────────────
+  const maxW = 200, maxH = 260;
+  let dispW, dispH;
+  if (sz.w >= sz.h) {
+    dispW = maxW;
+    dispH = Math.round(maxW * sz.h / sz.w);
   } else {
-    // محاكاة باركود خطي
-    for (let i = 0; i < 50; i++) {
-      const bar = document.createElement('div');
-      bar.className = 'barcode-bar';
-      bar.style.height = Math.random() * 30 + 10 + 'px';
-      bar.style.width = (Math.random() * 3 + 1) + 'px';
-      bars.appendChild(bar);
-    }
+    dispH = Math.min(maxH, Math.round(maxW * sz.h / sz.w));
+    dispW = Math.round(dispH * sz.w / sz.h);
+  }
+  wrap.style.width  = dispW + 'px';
+  wrap.style.height = dispH + 'px';
+  canvas.style.width  = dispW + 'px';
+  canvas.style.height = dispH + 'px';
+
+  if (sizeInfo) {
+    sizeInfo.textContent = `${sz.w} × ${sz.h} مم | خط: ${fs}px | ${bcType}`;
   }
 }
 
 // ============================================================
-//  إعدادات الطباعة
+//  معاينة الفاتورة الحية
 // ============================================================
-async function choosePrinter(type) {
-  const isInvoice = type === 'invoice';
-  const currentPrinter = await window.getSetting(isInvoice ? 'printerInvoice' : 'printerBarcode');
-  
-  // محاكاة اختيار طابعة - في الواقع سيتم جلب قائمة الطابعات من السيرفر
-  const printers = ['طابعة الفواتير', 'طابعة الباركود', 'طابعة الشبكة', 'الطابعة الافتراضية'];
-  
-  const selected = await new Promise(resolve => {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.style.display = 'flex';
-    
-    modal.innerHTML = `
-      <div class="modal modal-sm">
-        <div class="modal-header">
-          <span class="modal-title">اختر طابعة</span>
-          <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
-        </div>
-        <div style="padding:15px;">
-          ${printers.map(p => `
-            <div class="printer-card" style="margin-bottom:5px; cursor:pointer;" onclick="selectPrinter('${p}', '${type}')">
-              <div class="printer-icon"><i class="fa-solid fa-print"></i></div>
-              <div class="printer-info">
-                <div class="printer-name">${p}</div>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    `;
-    
-    document.body.appendChild(modal);
-    window.selectPrinter = (printer, type) => {
-      modal.remove();
-      resolve(printer);
-    };
-  });
-  
-  if (selected) {
-    if (isInvoice) {
-      document.getElementById('invoicePrinterName').textContent = selected;
-      document.getElementById('invoicePrinterCard').classList.add('selected');
-      await window.setSetting('printerInvoice', selected);
-    } else {
-      document.getElementById('barcodePrinterName').textContent = selected;
-      document.getElementById('barcodePrinterCard').classList.add('selected');
-      await window.setSetting('printerBarcode', selected);
+async function updateInvoicePreview() {
+  const el = document.getElementById('invoiceLivePreview');
+  if (!el) return;
+
+  const paper     = document.getElementById('paperSize')?.value || '80mm';
+  const showName  = document.getElementById('printName')?.checked;
+  const showPhone = document.getElementById('printPhone')?.checked;
+  const showAddr  = document.getElementById('printAddress')?.checked;
+  const showWelc  = document.getElementById('printWelcome')?.checked;
+  const showBC    = document.getElementById('printBarcode')?.checked;
+
+  const storeName = (await window.getSetting('storeName'))    || 'اسم المتجر';
+  const phone     = (await window.getSetting('storePhone'))   || '';
+  const address   = (await window.getSetting('storeAddress')) || '';
+  const welcome   = (await window.getSetting('storeWelcome')) || 'شكراً لزيارتكم';
+  const currency  = (await window.getSetting('currency'))     || 'DA';
+
+  const w = paper === '58mm' ? '140px' : '180px';
+  el.style.width = w;
+
+  const sep  = `<div style="border-top:1px solid #000;margin:3px 0;"></div>`;
+  const sep2 = `<div style="border-top:2px solid #000;margin:3px 0;"></div>`;
+
+  let html = '';
+  // رأس الفاتورة
+  html += `<div style="display:table;width:100%;"><div style="display:table-row;">
+    <div style="display:table-cell;text-align:right;font-weight:900;">فاتورة #001</div>
+    <div style="display:table-cell;text-align:left;font-size:0.85em;">2026/03/12</div>
+  </div><div style="display:table-row;">
+    <div style="display:table-cell;text-align:right;">البائع:</div>
+    <div style="display:table-cell;text-align:left;">ADMIN</div>
+  </div></div>`;
+  html += sep2;
+  // اسم المتجر
+  if (showName) html += `<div style="text-align:center;font-weight:900;font-size:1.1em;">${storeName}</div>`;
+  if (showPhone && phone) html += `<div style="text-align:center;">${phone}</div>`;
+  if (showAddr  && address) html += `<div style="text-align:center;font-size:0.85em;">${address}</div>`;
+  html += sep2;
+  // جدول المنتجات
+  html += `<div style="display:table;width:100%;border-bottom:1px solid #000;">
+    <div style="display:table-row;">
+      <div style="display:table-cell;text-align:right;width:42%;font-weight:900;">المنتج</div>
+      <div style="display:table-cell;text-align:center;width:8%;font-weight:900;">ك</div>
+      <div style="display:table-cell;text-align:center;width:22%;font-weight:900;">السعر</div>
+      <div style="display:table-cell;text-align:left;width:28%;font-weight:900;">المجموع</div>
+    </div></div>
+  <div style="display:table;width:100%;">
+    <div style="display:table-row;">
+      <div style="display:table-cell;text-align:right;width:42%;">منتج 1</div>
+      <div style="display:table-cell;text-align:center;width:8%;">2</div>
+      <div style="display:table-cell;text-align:center;width:22%;">150</div>
+      <div style="display:table-cell;text-align:left;width:28%;font-weight:700;">300 ${currency}</div>
+    </div></div>`;
+  html += sep;
+  // المجاميع
+  html += `<div style="display:table;width:100%;">
+    <div style="display:table-row;">
+      <div style="display:table-cell;text-align:right;font-weight:900;">الإجمالي:</div>
+      <div style="display:table-cell;text-align:left;font-weight:900;">300 ${currency}</div>
+    </div>
+    <div style="display:table-row;">
+      <div style="display:table-cell;text-align:right;">المدفوع:</div>
+      <div style="display:table-cell;text-align:left;">300 ${currency}</div>
+    </div></div>`;
+  html += sep2;
+  // رسالة الشكر
+  if (showWelc) html += `<div style="text-align:center;font-weight:700;">${welcome}</div>`;
+  // باركود
+  if (showBC) html += `<div style="text-align:center;font-family:monospace;letter-spacing:2px;margin-top:3px;">||||  #001  ||||</div>`;
+  html += `<div style="border-top:1px dashed #888;margin-top:4px;"></div>`;
+
+  el.innerHTML = html;
+}
+
+// ============================================================
+//  فتح إعدادات الطابعات في الحاسوب
+// ============================================================
+async function openSystemPrinters() {
+  // محاولة فتح إعدادات الطابعات عبر السيرفر المحلي أولاً
+  try {
+    const en = await window.getSetting('syncEnabled');
+    const ip = (await window.getSetting('syncServerIP')) || '192.168.1.1';
+    const pt = (await window.getSetting('syncServerPort')) || '3000';
+    if (en === '1') {
+      const r = await fetch(`http://${ip}:${pt}/api/open-printers`, {
+        method: 'POST', signal: AbortSignal.timeout(3000)
+      });
+      if (r.ok) {
+        window.toast?.show('تم فتح إعدادات الطابعات', 'success');
+        return;
+      }
     }
+  } catch (_) {}
+  // fallback: رسالة توجيه
+  window.toast?.show('افتح: إعدادات Windows ← الطابعات والماسحات الضوئية', 'info', 5000);
+}
+
+// ============================================================
+//  تغيير رقم الفاتورة الابتدائي
+// ============================================================
+async function applyInvoiceNumber() {
+  const inp = document.getElementById('invoiceStartNumber');
+  const n   = parseInt(inp?.value);
+  if (!n || n < 1 || n > 9999) {
+    window.toast?.show('أدخل رقماً صحيحاً بين 1 و 9999', 'warning');
+    return;
+  }
+  try {
+    // تحديث الـ counter في IndexedDB مباشرة
+    const today = new Date().toISOString().slice(0, 10);
+    await window.dbManager.put('counter', { id: 1, number: n, lastReset: today });
+    window.toast?.show(`✅ رقم الفاتورة التالي: #${String(n).padStart(3,'0')}`, 'success');
+    inp.value = '';
+  } catch (e) {
+    window.toast?.show('خطأ في تحديث الرقم: ' + e.message, 'error');
   }
 }
 
-function testPrintInvoice() {
-  // فتح نافذة طباعة تجريبية
-  const printWindow = window.open('', '_blank', 'width=400,height=600');
-  printWindow.document.write(`
-    <html dir="rtl">
-    <head><title>طباعة تجريبية</title></head>
-    <body>${document.getElementById('invoicePreview').textContent}</body>
-    </html>
-  `);
-  printWindow.document.close();
-  printWindow.print();
+// ============================================================
+//  طباعة تجريبية حقيقية
+// ============================================================
+async function testPrintInvoice() {
+  if (typeof window.printInvoice !== 'function') {
+    window.toast?.show('⚠️ وحدة الطباعة غير محمّلة (print.js)', 'error');
+    return;
+  }
+  const fakeSale = {
+    invoiceNumber: '#TEST',
+    total: 500,
+    discount: 0,
+    paid: 500,
+    change: 0,
+    isDebt: 0,
+    date: new Date().toISOString(),
+    sellerName: 'ADMIN',
+    customerName: '',
+    customerPhone: '',
+  };
+  const fakeItems = [
+    { name: 'منتج تجريبي',   quantity: 2, unitPrice: 150, total: 300 },
+    { name: 'منتج اختبار 2', quantity: 1, unitPrice: 200, total: 200 },
+  ];
+  await window.printInvoice(fakeSale, fakeItems);
 }
 
 // ============================================================
