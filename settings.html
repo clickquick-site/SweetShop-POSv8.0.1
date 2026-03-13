@@ -1977,14 +1977,17 @@ async function _drawBcPreview() {
   const sizeInfo= document.getElementById('bcSizeInfo');
   if (!canvas || !wrap) return;
 
-  const rawSize   = document.getElementById('barcodeSize')?.value || '30x40';
+  const rawSize   = document.getElementById('barcodeSize')?.value || '40x30';
   const bcType    = document.getElementById('barcodeType')?.value || 'CODE128';
   const showStore = document.getElementById('barcodeShowStore')?.checked;
   const showName  = document.getElementById('barcodeShowName')?.checked;
   const showPrice = document.getElementById('barcodeShowPrice')?.checked;
   const fs        = currentBarcodeFontSize;
 
-  // ── أبعاد الملصق ──────────────────────────────────────────
+  // ── نفس SIZES في print.js ─────────────────────────────────
+  // w = البعد الأقصر (يُرسم كعرض قبل التدوير)
+  // h = البعد الأطول (يُرسم كارتفاع قبل التدوير)
+  // بعد التدوير 90°: العرض النهائي = h، الارتفاع النهائي = w
   const SIZES = {
     '30x20':{w:20,h:30},'40x20':{w:20,h:40},'38x25':{w:25,h:38},
     '40x25':{w:25,h:40},'40x30':{w:30,h:40},'58x20':{w:20,h:58},
@@ -1992,110 +1995,129 @@ async function _drawBcPreview() {
   };
   const sz = SIZES[rawSize] || {w:30,h:40};
 
-  // ── حجم الرسم: نكبّر للعرض (96dpi → mm * 3.78) ──────────
-  const SCALE = 3.0;  // px per mm في المعاينة
-  const DPI   = 203, MM2IN = 25.4;
-  const mm2px = mm => Math.round((mm / MM2IN) * DPI);
+  // ── المقياس: 4px لكل mm في المعاينة ──────────────────────
+  const SCALE = 4.0;
 
-  const CW = Math.round(sz.w * SCALE);
-  const CH = Math.round(sz.h * SCALE);
-  const P  = Math.round(0.7 * SCALE);
+  // الـ canvas الوسيط (portrait — نفس ما يفعله _drawLabel)
+  const PW = Math.round(sz.w * SCALE);   // عرض portrait
+  const PH = Math.round(sz.h * SCALE);   // ارتفاع portrait
+  const P  = Math.round(0.7 * SCALE);    // padding
 
-  canvas.width  = CW;
-  canvas.height = CH;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, CW, CH);
+  const tmp = document.createElement('canvas');
+  tmp.width  = PW;
+  tmp.height = PH;
+  const ctx = tmp.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, PW, PH);
   ctx.fillStyle = '#000';
-  ctx.textAlign = 'center';
+  ctx.textAlign    = 'center';
   ctx.textBaseline = 'top';
 
-  const storeName  = (await window.getSetting('storeName')) || 'اسم المتجر';
-  const currency   = (await window.getSetting('currency'))  || 'DA';
-  const sampleCode = '1234567890';
-  const sampleName = 'منتج تجريبي';
-  const samplePrice= '150 ' + currency;
+  const storeName   = (await window.getSetting('storeName')) || 'اسم المتجر';
+  const currency    = (await window.getSetting('currency'))  || 'DA';
+  const sampleCode  = '1234567890';
+  const sampleName  = 'منتج تجريبي';
+  const samplePrice = '150 ' + currency;
+  const font        = '"Tahoma","Arial",sans-serif';
 
-  const font = '"Tahoma","Arial",sans-serif';
-  const FSS  = Math.max(6, fs - 2);
-  const FSP  = Math.max(7, fs);
-  const FSN  = Math.max(5, fs - 3);
-  const FSR  = Math.max(8, fs + 2);
+  // حجم الخط من الإعداد — لا يعتمد على حجم الملصق
+  const FSS = Math.max(6,  Math.min(40, fs));
+  const FSP = Math.max(7,  Math.min(40, fs + 1));
+  const FSN = Math.max(5,  Math.min(30, fs - 2));
+  const FSR = Math.max(8,  Math.min(40, fs + 2));
 
   let y = P;
 
-  // اسم المتجر
   if (showStore) {
     ctx.font = '800 ' + FSS + 'px ' + font;
-    ctx.fillText(storeName, CW / 2, y);
-    y += FSS + P * 0.5;
+    // قطع النص إذا فاق العرض
+    let t = storeName;
+    while (t.length > 1 && ctx.measureText(t).width > PW - P * 2) t = t.slice(0, -1);
+    if (t !== storeName) t += '…';
+    ctx.fillText(t, PW / 2, y);
+    y += FSS + Math.round(P * 0.5);
   }
-  // اسم المنتج
   if (showName) {
     ctx.font = '900 ' + FSP + 'px ' + font;
-    ctx.fillText(sampleName, CW / 2, y);
-    y += FSP + P * 0.5;
+    let t = sampleName;
+    while (t.length > 1 && ctx.measureText(t).width > PW - P * 2) t = t.slice(0, -1);
+    if (t !== sampleName) t += '…';
+    ctx.fillText(t, PW / 2, y);
+    y += FSP + Math.round(P * 0.5);
   }
 
-  // المساحة المتبقية للباركود
-  const botH = P + FSN + P * 0.5 + (showPrice ? FSR + P * 0.5 : 0);
-  const bH   = Math.max(Math.round(3 * SCALE), CH - y - botH - P);
-  const bW   = CW - P * 2;
+  // ارتفاع الباركود = المساحة المتبقية
+  const botH = P + FSN + Math.round(P * 0.5) + (showPrice ? FSR + Math.round(P * 0.5) : 0);
+  const bH   = Math.max(Math.round(3 * SCALE), PH - y - botH - P);
+  const bW   = PW - P * 2;
 
-  // ── رسم الباركود بـ JsBarcode ─────────────────────────────
+  // ── رسم الباركود بـ JsBarcode (نفس منطق _drawLabel) ──────
   let bcDrawn = false;
   if (typeof JsBarcode !== 'undefined' && bcType !== 'QR') {
     try {
-      const tmp = document.createElement('canvas');
-      const xd  = Math.max(1, Math.floor(bW / 95));
-      JsBarcode(tmp, sampleCode, {
+      const bc  = document.createElement('canvas');
+      const units = bcType === 'EAN13' ? 95 : bcType === 'EAN8' ? 67 : bcType === 'UPCA' ? 95 :
+                    Math.max(40, (sampleCode.length + 3) * 11 + 35);
+      const xd  = Math.max(1, Math.floor(bW / units));
+      JsBarcode(bc, sampleCode, {
         format: bcType, width: xd, height: bH,
         displayValue: false, margin: 0,
         background: '#fff', lineColor: '#000'
       });
-      if (tmp.width > 0) {
-        ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, P, y, bW, bH);
+      if (bc.width > 0 && bc.height > 0) {
+        ctx.drawImage(bc, 0, 0, bc.width, bc.height, P, y, bW, bH);
         bcDrawn = true;
       }
     } catch (e) {}
   }
   if (!bcDrawn) {
-    // fallback بسيط
-    ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth   = 1;
     ctx.strokeRect(P, y, bW, bH);
     ctx.font = '700 ' + FSN + 'px monospace';
-    ctx.fillText('[BARCODE]', CW / 2, y + bH / 2 - FSN / 2);
+    ctx.fillText('[' + bcType + ']', PW / 2, y + bH / 2 - FSN / 2);
   }
-  y += bH + P * 0.3;
+  y += bH + Math.round(P * 0.3);
 
   // رقم الباركود
   ctx.font = '700 ' + FSN + 'px "Courier New",monospace';
-  ctx.fillText(sampleCode, CW / 2, y);
-  y += FSN + P * 0.4;
+  ctx.fillText(sampleCode, PW / 2, y);
+  y += FSN + Math.round(P * 0.4);
 
   // السعر
   if (showPrice) {
     ctx.font = '900 ' + FSR + 'px ' + font;
-    ctx.fillText(samplePrice, CW / 2, y);
+    ctx.fillText(samplePrice, PW / 2, y);
   }
 
-  // ── ضبط حجم الحاوية بنسبة الأبعاد الحقيقية ───────────────
-  const maxW = 200, maxH = 260;
-  let dispW, dispH;
-  if (sz.w >= sz.h) {
-    dispW = maxW;
-    dispH = Math.round(maxW * sz.h / sz.w);
-  } else {
-    dispH = Math.min(maxH, Math.round(maxW * sz.h / sz.w));
-    dispW = Math.round(dispH * sz.w / sz.h);
-  }
-  wrap.style.width  = dispW + 'px';
-  wrap.style.height = dispH + 'px';
+  // ── تدوير 90° → landscape (نفس ما يفعله _drawLabel) ──────
+  // portrait: PW × PH
+  // بعد التدوير: عرض = PH، ارتفاع = PW
+  canvas.width  = PH;
+  canvas.height = PW;
+  const rctx = canvas.getContext('2d');
+  rctx.fillStyle = '#fff';
+  rctx.fillRect(0, 0, PH, PW);
+  rctx.translate(PH, 0);
+  rctx.rotate(Math.PI / 2);
+  rctx.drawImage(tmp, 0, 0);
+
+  // ── ضبط الحجم المعروض (landscape: عرض > ارتفاع) ─────────
+  // الأبعاد الحقيقية للملصق بالـ mm: عرض = sz.h، ارتفاع = sz.w
+  const labelW_mm = sz.h;  // العرض الحقيقي بعد التدوير
+  const labelH_mm = sz.w;  // الارتفاع الحقيقي بعد التدوير
+
+  const MAX_DISP_W = 340;
+  const dispW = Math.min(MAX_DISP_W, Math.round(labelW_mm * SCALE));
+  const dispH = Math.round(dispW * labelH_mm / labelW_mm);
+
   canvas.style.width  = dispW + 'px';
   canvas.style.height = dispH + 'px';
+  wrap.style.width    = dispW + 'px';
+  wrap.style.height   = dispH + 'px';
 
   if (sizeInfo) {
-    // rawSize هو المفتاح = عرض×ارتفاع الحقيقي للملصق
-    const [lw, lh] = (rawSize || '40x30').split('x');
+    const [lw, lh] = rawSize.split('x');
     sizeInfo.textContent = `${lw} × ${lh} مم | خط: ${fs}px | ${bcType}`;
   }
 }
@@ -2178,26 +2200,23 @@ async function updateInvoicePreview() {
 }
 
 // ============================================================
-//  فتح إعدادات الطابعات في الحاسوب
+//  فتح إعدادات الطابعات في Windows مباشرة
 // ============================================================
-async function openSystemPrinters() {
-  // محاولة فتح إعدادات الطابعات عبر السيرفر المحلي أولاً
-  try {
-    const en = await window.getSetting('syncEnabled');
-    const ip = (await window.getSetting('syncServerIP')) || '192.168.1.1';
-    const pt = (await window.getSetting('syncServerPort')) || '3000';
-    if (en === '1') {
-      const r = await fetch(`http://${ip}:${pt}/api/open-printers`, {
-        method: 'POST', signal: AbortSignal.timeout(3000)
-      });
-      if (r.ok) {
-        window.toast?.show('تم فتح إعدادات الطابعات', 'success');
-        return;
-      }
-    }
-  } catch (_) {}
-  // fallback: رسالة توجيه
-  window.toast?.show('افتح: إعدادات Windows ← الطابعات والماسحات الضوئية', 'info', 5000);
+function openSystemPrinters() {
+  // ms-settings:printers يفتح صفحة الطابعات في إعدادات Windows مباشرة
+  // هذا هو الطريق الوحيد الصحيح لاختيار طابعة من المتصفح
+  const link = document.createElement('a');
+  link.href  = 'ms-settings:printers';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  // رسالة توجيه
+  window.toast?.show(
+    'ستفتح إعدادات الطابعات — اختر الطابعة المناسبة ثم أدخل اسمها هنا',
+    'info', 5000
+  );
 }
 
 // ============================================================
