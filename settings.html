@@ -1141,19 +1141,13 @@
                 </div>
                 <div class="setting-control">
                   <select class="form-select" id="barcodeSize" onchange="updateBarcodePreview()">
-                    <option value="20x30">20 × 30 مم</option>
-                    <option value="20x40">20 × 40 مم</option>
-                    <option value="25x38">25 × 38 مم</option>
-                    <option value="25x40">25 × 40 مم</option>
-                    <option value="30x40" selected>30 × 40 مم</option>
+                    <option value="30x20">30 × 20 مم</option>
                     <option value="40x20">40 × 20 مم</option>
+                    <option value="38x25">38 × 25 مم</option>
                     <option value="40x25">40 × 25 مم</option>
-                    <option value="40x30">40 × 30 مم</option>
-                    <option value="20x58">20 × 58 مم</option>
-                    <option value="30x58">30 × 58 مم</option>
+                    <option value="40x30" selected>40 × 30 مم</option>
                     <option value="58x20">58 × 20 مم</option>
                     <option value="58x30">58 × 30 مم</option>
-                    <option value="58x38">58 × 38 مم</option>
                   </select>
                 </div>
               </div>
@@ -1992,11 +1986,9 @@ async function _drawBcPreview() {
 
   // ── أبعاد الملصق ──────────────────────────────────────────
   const SIZES = {
-    '20x30':{w:20,h:30},'20x40':{w:20,h:40},'25x38':{w:25,h:38},
-    '25x40':{w:25,h:40},'30x40':{w:30,h:40},'40x20':{w:40,h:20},
-    '40x25':{w:40,h:25},'40x30':{w:40,h:30},'20x58':{w:20,h:58},
-    '30x58':{w:30,h:58},'58x20':{w:58,h:20},'58x30':{w:58,h:30},
-    '58x38':{w:58,h:38},
+    '30x20':{w:20,h:30},'40x20':{w:20,h:40},'38x25':{w:25,h:38},
+    '40x25':{w:25,h:40},'40x30':{w:30,h:40},'58x20':{w:20,h:58},
+    '58x30':{w:30,h:58},
   };
   const sz = SIZES[rawSize] || {w:30,h:40};
 
@@ -2102,7 +2094,9 @@ async function _drawBcPreview() {
   canvas.style.height = dispH + 'px';
 
   if (sizeInfo) {
-    sizeInfo.textContent = `${sz.w} × ${sz.h} مم | خط: ${fs}px | ${bcType}`;
+    // rawSize هو المفتاح = عرض×ارتفاع الحقيقي للملصق
+    const [lw, lh] = (rawSize || '40x30').split('x');
+    sizeInfo.textContent = `${lw} × ${lh} مم | خط: ${fs}px | ${bcType}`;
   }
 }
 
