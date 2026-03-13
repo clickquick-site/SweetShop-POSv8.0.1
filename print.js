@@ -71,21 +71,15 @@ window._inputDialog = _inputDialog;
 const POSDZ_PRINT = (() => {
 
   const SIZE_MAP = {
-    // الأحجام المطلوبة (عرض × ارتفاع بالـ mm)
-    '20x30': { w: 20, h: 30 },
-    '20x40': { w: 20, h: 40 },
-    '25x38': { w: 25, h: 38 },
-    '25x40': { w: 25, h: 40 },
-    '30x40': { w: 30, h: 40 },
-    '20x58': { w: 20, h: 58 },
-    '30x58': { w: 30, h: 58 },
-    // أحجام إضافية متوافقة
-    '40x20': { w: 40, h: 20 },
-    '40x25': { w: 40, h: 25 },
-    '40x30': { w: 40, h: 30 },
-    '58x20': { w: 58, h: 20 },
-    '58x30': { w: 58, h: 30 },
-    '58x38': { w: 58, h: 38 },
+    // المفتاح = عرض×ارتفاع (كما يُكتب على الملصق)
+    // القيم الداخلية: w=الأقصر, h=الأطول (للرسم عمودياً ثم تدوير 90°)
+    '30x20': { w: 20, h: 30 },
+    '40x20': { w: 20, h: 40 },
+    '38x25': { w: 25, h: 38 },
+    '40x25': { w: 25, h: 40 },
+    '40x30': { w: 30, h: 40 },
+    '58x20': { w: 20, h: 58 },
+    '58x30': { w: 30, h: 58 },
   };
   const DPI = 203, MM2INCH = 25.4;
   const mm2px = mm => Math.round((mm / MM2INCH) * DPI);
@@ -240,7 +234,7 @@ const POSDZ_PRINT = (() => {
     const bv=(product.barcode||String(product.id||'')).trim();
     if (!bv){if(typeof toast==='function')toast('لا يوجد باركود للمنتج','warning');return;}
     const [sName,cur,bcFont,bcType,showStore,showName,showPrice,rawSize,rawFs]=await Promise.all(['storeName','currency','barcodeFont','barcodeType','barcodeShowStore','barcodeShowName','barcodeShowPrice','barcodeSize','barcodeFontSize'].map(k=>getSetting(k)));
-    const size=SIZE_MAP[rawSize||'30x40']||SIZE_MAP['30x40']||{w:30,h:40};
+    const size=SIZE_MAP[rawSize||'40x30']||SIZE_MAP['40x30']||{w:30,h:40};
     const fs=Math.max(7,Math.min(40,parseInt(rawFs)||10));
     await _loadBC();
     const opts={sName,cur,bcFont,bcType,showStore,showName,showPrice,size,fs,bv};
